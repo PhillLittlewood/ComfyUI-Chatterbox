@@ -42,7 +42,15 @@ VC_NODE_ID = "ChatterboxVC"
 # node or force this test to stop filtering by name -- and a test that stops
 # filtering by name stops being exact tuple equality, which is the whole point.
 APPENDED_WIDGETS: dict[str, tuple[str, ...]] = {
-    TTS_NODE_ID: ("device", "dtype", "attention_mode"),
+    TTS_NODE_ID: (
+        "device",
+        "dtype",
+        "attention_mode",
+        # Turbo-family controls, appended when the Turbo node merged into the
+        # TTS node (2026-10-06). Classic packs ignore both.
+        "top_k",
+        "normalize_loudness",
+    ),
     VC_NODE_ID: (
         "device",
         "dtype",

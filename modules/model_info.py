@@ -42,6 +42,7 @@ __all__ = [
     "TURBO_AVAILABLE",
     "read_model_config",
     "describe_model_dir",
+    "infer_pack_architecture",
     "is_chatterbox_model_dir",
     "scan_chatterbox_models",
     "scan_custom_model_path",
@@ -98,8 +99,12 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "files": ["t3_mtl23ls_v3.safetensors", "ve.safetensors", "s3gen.safetensors", "tokenizer.json", "conds.pt"],
         "description": "23-language multilingual T3, newer checkpoint: better similarity, fewer hallucinations.",
     },
-    # Half the parameters, English only, paralinguistic tags.
-    "tts_turbo": {
+    # The Turbo family. Turbo is the family's name upstream
+    # (ResembleAI/chatterbox-turbo); Nano is its smaller member
+    # (ResembleAI/chatterbox-nano) and is named as one here. The registry key
+    # is the folder name a first-run download creates, so it mirrors what the
+    # author published.
+    "chatterbox-turbo": {
         "repo_id": "ResembleAI/chatterbox-turbo",
         "architecture": "chatterbox_turbo",
         "sample_rate": 24000,
@@ -107,8 +112,9 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "files": ["t3_turbo_v1.safetensors", "ve.safetensors", "s3gen.safetensors", "s3gen_meanflow.safetensors", "tokenizer.json", "conds.pt"],
         "description": "350M English model with paralinguistic tags; lower VRAM.",
     },
-    # A quarter of Turbo again; runs on CPU at realtime.
-    "tts_nano": {
+    # A quarter of Turbo again; runs on CPU at realtime. The repo is
+    # ResembleAI/chatterbox-nano; the folder names the family it belongs to.
+    "chatterbox-turbo-nano": {
         "repo_id": "ResembleAI/chatterbox-nano",
         "architecture": "chatterbox_nano",
         "sample_rate": 24000,
@@ -123,7 +129,7 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
             "tokenizer_config.json",
             "conds.pt",
         ],
-        "description": "110M English model for CPU and tight latency budgets. "
+        "description": "Turbo-family 110M model for CPU and tight latency budgets. "
         "Ships an HF tokenizer (vocab.json + merges.txt), not a tokenizer.json.",
     },
 }
@@ -251,6 +257,21 @@ def _infer_architecture(entries: List[str]) -> Optional[str]:
     if "t3_cfg.safetensors" in entries:
         return "chatterbox_tts"
     return None
+
+
+def infer_pack_architecture(pack_dir: str) -> Optional[str]:
+    """A pack directory's architecture from the t3 checkpoint it carries.
+
+    ``"chatterbox_tts"`` / ``"chatterbox_turbo"`` / ``"chatterbox_nano"`` /
+    ``"chatterbox_multilingual"``, or ``None`` when the directory is missing
+    or holds no recognised t3 checkpoint -- a community rename or a half
+    download answers ``None`` and the caller falls back to whatever else it
+    knows. This is the loader-facing half of :func:`_infer_architecture`: the
+    t3 filename is the pack's identity, never the folder it sits in.
+    """
+    if not pack_dir or not os.path.isdir(pack_dir):
+        return None
+    return _infer_architecture(_list_entries(pack_dir))
 
 
 def describe_model_dir(model_dir: str) -> Dict[str, Any]:

@@ -5,7 +5,6 @@ against ``tests/frozen_widget_snapshot.json``:
 
 * :mod:`nodes.tts_node` -- ``ChatterboxTTS``, speech synthesis.
 * :mod:`nodes.mtl_node` -- ``ChatterboxMTLTTS``, multilingual synthesis.
-* :mod:`nodes.turbo_node` -- ``ChatterboxTurboTTS``, Turbo / Nano.
 * :mod:`nodes.srt_node` -- ``ChatterboxSRT``, timed subtitles.
 * :mod:`nodes.dialog_node` -- ``ChatterboxDialog``, multi-speaker.
 * :mod:`nodes.vc_node` -- ``ChatterboxVC``, voice conversion.
@@ -25,7 +24,6 @@ other node.
 
 from .tts_node import ChatterboxTTSNode
 from .mtl_node import ChatterboxMTLTTSNode
-from .turbo_node import ChatterboxTurboTTSNode
 from .srt_node import ChatterboxSRTNode
 from .dialog_node import ChatterboxDialogNode
 from .vc_node import ChatterboxVCNode
@@ -33,7 +31,6 @@ from .vc_node import ChatterboxVCNode
 __all__ = [
     "ChatterboxTTSNode",
     "ChatterboxMTLTTSNode",
-    "ChatterboxTurboTTSNode",
     "ChatterboxSRTNode",
     "ChatterboxDialogNode",
     "ChatterboxVCNode",

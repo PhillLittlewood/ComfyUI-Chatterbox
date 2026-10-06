@@ -59,7 +59,13 @@ APPENDED_WIDGETS = {
 # assertion below is that this set is closed, and deriving it from "whatever
 # happens to follow the frozen block" would make it true by construction.
 APPENDED_WIDGET_ORDER: dict[str, tuple[str, ...]] = {
-    TTS_NODE_ID: ("device", "dtype", "attention_mode"),
+    TTS_NODE_ID: (
+        "device",
+        "dtype",
+        "attention_mode",
+        "top_k",  # Turbo-family controls (Turbo node merged into TTS node).
+        "normalize_loudness",
+    ),
     VC_NODE_ID: (
         "device",
         "dtype",

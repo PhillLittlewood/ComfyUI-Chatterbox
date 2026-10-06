@@ -27,7 +27,6 @@ from .nodes import (
     ChatterboxMTLTTSNode,
     ChatterboxSRTNode,
     ChatterboxTTSNode,
-    ChatterboxTurboTTSNode,
     ChatterboxVCNode,
 )
 
@@ -60,8 +59,7 @@ class ChatterboxExtension(ComfyExtension):
         return [
             ChatterboxTTSNode,
             ChatterboxMTLTTSNode,
-            ChatterboxTurboTTSNode,
-            ChatterboxSRTNode,
+                    ChatterboxSRTNode,
             ChatterboxDialogNode,
             ChatterboxVCNode,
         ]

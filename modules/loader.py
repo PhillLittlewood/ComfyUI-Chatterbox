@@ -126,15 +126,17 @@ def _refuse_wrong_variant_pack(pack_dir: str, model_name: str, entry_point: str)
     if entry_point == "classic" and turbo_shaped:
         raise FileNotFoundError(
             f"The pack '{model_name}' at '{pack_dir}' is a Chatterbox "
-            "Turbo/Nano pack (GPT2-style T3 weights). The classic Chatterbox "
-            "TTS node cannot run it -- use the Chatterbox Turbo node, with "
-            "the 'nano' switch on for Nano."
+            "Turbo/Nano pack (GPT2-style T3 weights) reaching the classic "
+            "loader directly. The Chatterbox TTS node routes Turbo-family "
+            "packs automatically -- load them through that node, or this "
+            "loader's Turbo entry point."
         )
     if entry_point == "turbo" and classic_shaped:
         raise FileNotFoundError(
             f"The pack '{model_name}' at '{pack_dir}' is a classic Chatterbox "
-            "pack (llama-style T3 weights). The Turbo node cannot run it -- "
-            "use the Chatterbox TTS node."
+            "pack (llama-style T3 weights). The Turbo entry point cannot run "
+            "it -- the Chatterbox TTS node loads classic packs on its own "
+            "path."
         )
 
 

@@ -327,7 +327,7 @@ class TestModelsRoute:
         assert response.payload["models"][0]["path"] == str(tmp_path / "pack")
 
     def test_no_scan_block_unless_a_path_is_supplied(self, routes, tmp_path) -> None:
-        make_pack(tmp_path / "elsewhere", "tts_turbo", ("t3_turbo_v1.safetensors",))
+        make_pack(tmp_path / "elsewhere", "chatterbox-turbo", ("t3_turbo_v1.safetensors",))
 
         without = run(routes.handler("GET", f"{API_PREFIX}/models")(FakeRequest()))
         assert "scan" not in without.payload
@@ -338,7 +338,7 @@ class TestModelsRoute:
             )
         )
         assert with_path.payload["scan"]["count"] == 1
-        assert with_path.payload["scan"]["models"][0]["name"] == "tts_turbo"
+        assert with_path.payload["scan"]["models"][0]["name"] == "chatterbox-turbo"
 
 
 # ── POST /chatterbox/cancel_download ─────────────────────────────────
@@ -372,16 +372,16 @@ class TestCancelDownload:
 
         response = run(
             routes.handler("POST", f"{API_PREFIX}/cancel_download")(
-                FakeRequest({"model_name": "tts_turbo"})
+                FakeRequest({"model_name": "chatterbox-turbo"})
             )
         )
 
         assert response.status == 200, "cancelling nothing must not be a 500"
         assert response.payload == {
             "success": False,
-            "message": "No active download for 'tts_turbo'",
+            "message": "No active download for 'chatterbox-turbo'",
         }
-        assert manager.cancelled == ["tts_turbo"]
+        assert manager.cancelled == ["chatterbox-turbo"]
 
     def test_a_missing_model_name_is_a_400(self, routes) -> None:
         response = run(
@@ -444,7 +444,7 @@ class TestDownloadStatus:
 class TestTtsSearchPaths:
     def test_reports_the_packs_under_the_default_root(self, routes, fake_web, tmp_path) -> None:
         tts_root = tmp_path / "models" / TTS_FOLDER_KEY
-        pack = make_pack(tts_root / "chatterbox", "tts_nano", ("t3_nano_v1.safetensors",))
+        pack = make_pack(tts_root / "chatterbox", "chatterbox-turbo-nano", ("t3_nano_v1.safetensors",))
         router = FakeRouter()
         register_routes(
             router, FakeFolderPaths(tmp_path / "models", [str(tts_root)]), str(tmp_path)
@@ -459,7 +459,7 @@ class TestTtsSearchPaths:
         assert entry["path"] == str(tts_root)
         assert entry["is_default"] is True
         assert entry["chatterbox_subdir"] == str(tts_root / "chatterbox")
-        assert [model["name"] for model in entry["models"]] == ["tts_nano"]
+        assert [model["name"] for model in entry["models"]] == ["chatterbox-turbo-nano"]
         assert entry["models"][0]["architecture"] == "chatterbox_nano"
         assert entry["models"][0]["path"] == str(pack)
 
@@ -663,12 +663,15 @@ class TestRegisterModelPath:
         self, routes, fake_web, tmp_path
     ) -> None:
         parent = tmp_path / "downloads"
-        make_pack(parent, "tts_turbo", ("t3_turbo_v1.safetensors",))
+        make_pack(parent, "chatterbox-turbo", ("t3_turbo_v1.safetensors",))
         router = self._router(fake_web, tmp_path, FakeFolderPaths(tmp_path / "models"))
 
         self._register(router, str(parent))
 
-        assert model_info.AVAILABLE_CHATTERBOX_MODELS["tts_turbo"]["type"] == "official"
+        assert (
+            model_info.AVAILABLE_CHATTERBOX_MODELS["chatterbox-turbo"]["type"]
+            == "official"
+        )
 
     def test_an_already_registered_path_is_not_added_twice(
         self, routes, fake_web, tmp_path

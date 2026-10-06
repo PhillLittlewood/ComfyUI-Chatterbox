@@ -42,8 +42,8 @@ REQUIRED_OFFICIAL_MODELS = (
     "T3_v1",
     "T3_v2",
     "T3_v3",
-    "tts_turbo",
-    "tts_nano",
+    "chatterbox-turbo",
+    "chatterbox-turbo-nano",
 )
 
 
@@ -86,8 +86,8 @@ class TestOfficialRegistry:
         assert MODEL_CONFIGS["resembleai_default_voice"]["files"] == CHATTERBOX_FILES_TO_DOWNLOAD
 
     def test_turbo_and_nano_come_from_their_own_repositories(self) -> None:
-        assert MODEL_CONFIGS["tts_turbo"]["repo_id"] == "ResembleAI/chatterbox-turbo"
-        assert MODEL_CONFIGS["tts_nano"]["repo_id"] == "ResembleAI/chatterbox-nano"
+        assert MODEL_CONFIGS["chatterbox-turbo"]["repo_id"] == "ResembleAI/chatterbox-turbo"
+        assert MODEL_CONFIGS["chatterbox-turbo-nano"]["repo_id"] == "ResembleAI/chatterbox-nano"
 
     def test_the_multilingual_variants_are_distinct_checkpoints(self) -> None:
         files = [MODEL_CONFIGS[name]["files"][0] for name in ("T3_v1", "T3_v2", "T3_v3")]
@@ -123,11 +123,11 @@ class TestLocalRegistry:
     def test_local_entries_are_separated_from_official_ones(self, tmp_path) -> None:
         register_local_model("mine", write_pack(tmp_path, "mine"))
         assert AVAILABLE_CHATTERBOX_MODELS["mine"]["type"] == "local"
-        assert AVAILABLE_CHATTERBOX_MODELS["tts_turbo"]["type"] == "official"
+        assert AVAILABLE_CHATTERBOX_MODELS["chatterbox-turbo"]["type"] == "official"
 
     def test_an_official_entry_is_never_unregistered(self) -> None:
-        assert unregister_local_model("tts_turbo") is False
-        assert "tts_turbo" in AVAILABLE_CHATTERBOX_MODELS
+        assert unregister_local_model("chatterbox-turbo") is False
+        assert "chatterbox-turbo" in AVAILABLE_CHATTERBOX_MODELS
 
     def test_a_local_entry_can_be_unregistered(self, tmp_path) -> None:
         register_local_model("mine", write_pack(tmp_path, "mine"))

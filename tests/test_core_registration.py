@@ -30,7 +30,6 @@ from ComfyUI_Chatterbox.chatterbox_nodes import (
     ChatterboxMTLTTSNode,
     ChatterboxSRTNode,
     ChatterboxTTSNode,
-    ChatterboxTurboTTSNode,
     ChatterboxVCNode,
     comfy_entrypoint,
 )
@@ -42,7 +41,6 @@ from ComfyUI_Chatterbox.chatterbox_nodes import (
 NODES = (
     ChatterboxTTSNode,
     ChatterboxMTLTTSNode,
-    ChatterboxTurboTTSNode,
     ChatterboxSRTNode,
     ChatterboxDialogNode,
     ChatterboxVCNode,
@@ -55,7 +53,6 @@ NODES = (
 EXPECTED_OUTPUTS = {
     ChatterboxTTSNode: ["AUDIO"],
     ChatterboxMTLTTSNode: ["AUDIO"],
-    ChatterboxTurboTTSNode: ["AUDIO"],
     ChatterboxSRTNode: ["AUDIO", "STRING", "STRING", "STRING"],
     ChatterboxDialogNode: ["AUDIO", "AUDIO", "AUDIO", "AUDIO", "AUDIO", "STRING"],
     ChatterboxVCNode: ["AUDIO"],
@@ -64,7 +61,6 @@ EXPECTED_OUTPUTS = {
 EXPECTED_CATEGORIES = {
     ChatterboxTTSNode: "WMNodes/sound/tts",
     ChatterboxMTLTTSNode: "WMNodes/sound/tts",
-    ChatterboxTurboTTSNode: "WMNodes/sound/tts",
     ChatterboxSRTNode: "WMNodes/sound/util",
     ChatterboxDialogNode: "WMNodes/sound/tts",
     ChatterboxVCNode: "WMNodes/sound/vc",
@@ -249,7 +245,6 @@ def test_the_core_knows_both_node_ids() -> None:
     assert ids == {
         "ChatterboxTTS",
         "ChatterboxMTLTTS",
-        "ChatterboxTurboTTS",
         "ChatterboxSRT",
         "ChatterboxDialog",
         "ChatterboxVC",

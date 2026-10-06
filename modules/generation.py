@@ -44,10 +44,12 @@ from __future__ import annotations
 import contextlib
 import gc
 import logging
+import os
 from typing import Any, Optional
 
 import torch
 
+from . import model_info
 from .attention_utils import get_attn_implementation_for_load, resolve_attention_mode
 from .audio_utils import (
     S3GEN_SAMPLE_RATE,
@@ -65,6 +67,7 @@ from .device_utils import (
 from .dtype_utils import DTYPE_AUTO, get_dtype_str, resolve_dtype
 from .loader import ChatterboxLoader, ChatterboxModelHandler
 from .model_registry import FAMILY_TTS, evict_if_changed
+from .text_processing import plan_text
 from .patcher import (
     CHATTERBOX_PATCHER_CACHE as _SHARED_PATCHER_CACHE,
 )
@@ -256,6 +259,33 @@ def build_cache_key(
 # ---------------------------------------------------------------------------
 
 
+def _resolve_turbo_variant(model_name: str) -> Optional[str]:
+    """``"turbo"``/``"nano"`` when ``model_name`` names a Turbo-family pack.
+
+    The answer comes from the pack directory's t3 checkpoint when the pack is
+    on disk -- the folder name is arbitrary, the weights are not -- and from
+    the registry entry otherwise, so an official pack that is still
+    undownloaded routes to the right repository instead of failing the classic
+    completeness check.
+    """
+    try:
+        pack_dir = ChatterboxLoader.resolve_pack_dir(model_name)
+    except ValueError:
+        return None
+
+    architecture = None
+    if os.path.isdir(pack_dir):
+        architecture = model_info.infer_pack_architecture(pack_dir)
+    if architecture is None:
+        entry = model_info.AVAILABLE_CHATTERBOX_MODELS.get(model_name) or {}
+        architecture = entry.get("architecture")
+    if architecture == "chatterbox_nano":
+        return "nano"
+    if architecture == "chatterbox_turbo":
+        return "turbo"
+    return None
+
+
 def load_chatterbox_model(
     model_name: str,
     device: str = "auto",
@@ -295,6 +325,27 @@ def load_chatterbox_model(
         load_device = get_torch_device(device)
         offload_device = get_offload_device()
     target_dtype = resolve_dtype(dtype, load_device)
+
+    # 2b. Turbo-family packs (Turbo and its Nano member) load through their
+    #     own entry point: no VC half, no classic checkpoint checks, and a
+    #     cache entry of their own. The TTS node routes here so one node
+    #     serves the whole family. The entry point's own eviction sweep
+    #     clears the classic pack this node may still hold, the same way the
+    #     classic path below clears a Turbo one.
+    turbo_variant = _resolve_turbo_variant(model_name)
+    if turbo_variant is not None:
+        patcher, tts_model = load_chatterbox_entry_point(
+            model_name,
+            entry_point="turbo",
+            variant=turbo_variant,
+            family=FAMILY_TURBO,
+            device=device,
+            dtype=dtype,
+            attention_mode=attention_mode,
+            force_reload=force_reload,
+            client_id=client_id,
+        )
+        return patcher, tts_model, None
 
     # 3. The cache key.
     cache_key = build_cache_key(
@@ -424,8 +475,17 @@ def generate_audio(
     max_new_tokens: int = 1000,
     flow_cfg_scale: float = 0.7,
     use_watermark: bool = False,
+    top_k: int = 1000,
+    norm_loudness: bool = True,
 ) -> tuple[torch.Tensor, int]:
     """Synthesise ``text`` with a loaded Chatterbox TTS model.
+
+    Turbo-family packs (``ChatterboxTurboTTS`` -- Turbo and Nano) are
+    dispatched to :func:`generate_turbo_audio`: their sampler is a top-k /
+    top-p pair with no CFG, so ``cfg_weight`` and ``min_p`` are ignored for
+    them, and ``top_k``/``norm_loudness`` only mean anything there. The
+    dispatch is by model class name -- the vendored package is never imported
+    by this module.
 
     Args:
         model: The ``ChatterboxTTS`` instance from :func:`load_chatterbox_model`.
@@ -455,6 +515,24 @@ def generate_audio(
     if not text or not text.strip():
         raise ValueError(
             "Chatterbox needs some text to speak. The text input was empty."
+        )
+
+    # Turbo-family dispatch, before the classic progress bar: Turbo has no
+    # max_new_tokens to count, and its square-bracket tags need resolving.
+    if type(model).__name__ == "ChatterboxTurboTTS":
+        plan = plan_text(text, turbo_tags=True)
+        return generate_turbo_audio(
+            model,
+            plan.text,
+            audio_prompt=audio_prompt,
+            temperature=temperature,
+            top_k=top_k,
+            top_p=top_p,
+            repetition_penalty=repetition_penalty,
+            exaggeration=exaggeration,
+            norm_loudness=norm_loudness,
+            seed=seed,
+            use_watermark=use_watermark,
         )
 
     interrupt_error = interrupt_exception_class()
@@ -676,7 +754,11 @@ def load_chatterbox_entry_point(
             model_name,
             attention_mode=actual_attention_mode,
             dtype_str=dtype,
-            model_path=ChatterboxLoader.resolve_pack_dir(stem),
+            # The pack directory is the user's selection; the variant-folded
+            # stem is a cache key and must never name a folder. Deriving the
+            # path from the stem sent a Turbo download into 'X__nano' next to
+            # the pack the user actually picked.
+            model_path=ChatterboxLoader.resolve_pack_dir(model_name),
             load_vc=False,
             entry_point=entry_point,
             variant=variant,

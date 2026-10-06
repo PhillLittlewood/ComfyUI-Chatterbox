@@ -245,9 +245,16 @@ class TestShippedWidgetValuesAgainstTheLiveSchema:
         frozen = _frozen_widget_names(snapshot, "ChatterboxTTS")
         widgets = _widget_names(ChatterboxTTSNode)
         assert widgets[: len(frozen)] == frozen
-        # Exactly three widgets were appended behind the frozen window.
-        assert widgets[len(frozen) :] == ("device", "dtype", "attention_mode")
-        assert len(widgets) == len(frozen) + 3
+        # The S6.3 runtime widgets, then the Turbo-family controls appended
+        # when the Turbo node merged into this one (2026-10-06).
+        assert widgets[len(frozen) :] == (
+            "device",
+            "dtype",
+            "attention_mode",
+            "top_k",
+            "normalize_loudness",
+        )
+        assert len(widgets) == len(frozen) + 5
 
     def test_the_tts_node_validates_the_shipped_pack(self) -> None:
         path = os.path.join(ROOT_DIR, "example_workflows", "ChatterboxTTS-workflow.json")

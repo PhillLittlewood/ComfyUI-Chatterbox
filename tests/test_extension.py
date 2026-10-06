@@ -24,7 +24,6 @@ from ComfyUI_Chatterbox.chatterbox_nodes import (
     ChatterboxMTLTTSNode,
     ChatterboxSRTNode,
     ChatterboxTTSNode,
-    ChatterboxTurboTTSNode,
     ChatterboxVCNode,
     comfy_entrypoint,
 )
@@ -39,7 +38,6 @@ from .conftest_helpers import load_frozen_snapshot
 EXPECTED_NODES = (
     ChatterboxTTSNode,
     ChatterboxMTLTTSNode,
-    ChatterboxTurboTTSNode,
     ChatterboxSRTNode,
     ChatterboxDialogNode,
     ChatterboxVCNode,
@@ -47,7 +45,6 @@ EXPECTED_NODES = (
 EXPECTED_NODE_IDS = (
     "ChatterboxTTS",
     "ChatterboxMTLTTS",
-    "ChatterboxTurboTTS",
     "ChatterboxSRT",
     "ChatterboxDialog",
     "ChatterboxVC",
@@ -116,7 +113,6 @@ class TestNodeList:
         }
         assert {
             "ChatterboxMTLTTS",
-            "ChatterboxTurboTTS",
             "ChatterboxSRT",
             "ChatterboxDialog",
         } <= node_ids

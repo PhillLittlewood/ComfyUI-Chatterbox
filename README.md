@@ -111,15 +111,14 @@ is downloaded on first use.
 
 ### Nodes
 
-All six nodes live in the `WMNodes/sound` category group (tts / vc / util sub-groups), in the Add-Node-menu order
+All five nodes live in the `WMNodes/sound` category group (tts / vc / util sub-groups), in the Add-Node-menu order
 below. Load a ready-made graph from
 [`example_workflows/`](./example_workflows) to see them wired up.
 
 | Node id | Menu name | Outputs | What it does |
 |---|---|---|---|
-| `ChatterboxTTS` | Chatterbox TTS 📢 | `audio` | Synthesises speech from text, optionally cloning a voice from a short audio prompt. |
+| `ChatterboxTTS` | Chatterbox TTS 📢 | `audio` | Synthesises speech from text, optionally cloning a voice from a short audio prompt. One node for every TTS pack: classic, and the Turbo family (Turbo 350M / Nano 110M) is routed automatically from the pack's contents, with paralinguistic tags and a top-k sampler for Turbo-family packs. |
 | `ChatterboxMTLTTS` | Chatterbox Multilingual TTS 🌍 | `audio` | Synthesises speech in 23 languages with the multilingual model, in v1, v2 or v3. |
-| `ChatterboxTurboTTS` | Chatterbox Turbo TTS ⚡ | `audio` | Fast English speech synthesis with Turbo (350M) or Nano (110M): lower VRAM, one-step decoding, paralinguistic tags. |
 | `ChatterboxSRT` | Chatterbox SRT / Subtitles 📝 | `audio`, `generation_info`, `timing_report`, `Adjusted_SRT` | Speaks a timed SRT script and reconciles the model's actual timings with the file's, returning an adjusted subtitle file that matches the audio. |
 | `ChatterboxDialog` | Chatterbox Multi-Speaker Dialog 🎭 | `dialog_audio`, `speaker_a_audio`, `speaker_b_audio`, `speaker_c_audio`, `speaker_d_audio`, `message` | Speaks a `SPEAKER A:` / `SPEAKER B:` conversation with a separate voice per speaker, returning the mixed dialog plus each speaker's isolated stem. |
 | `ChatterboxVC` | Chatterbox Voice Conversion 🗣️ | `converted_audio` | Re-voices a source recording using a target voice. |
@@ -205,15 +204,24 @@ registers its `chatterbox` folder under *every* `tts` root ComfyUI resolves, so 
 pack installed under a secondary root from `extra_model_paths.yaml` is visible
 too.
 
-Pack/model pairing is validated at load time, before anything is downloaded:
+What a pack *is* is read from the t3 checkpoint it carries, not from its
+folder name, and pairing is validated at load time, before anything is
+downloaded:
 
-- **Turbo / Nano packs** (`t3_turbo_v1.safetensors` / `t3_nano_v1.safetensors`)
-  load through the **Chatterbox Turbo TTS ⚡** node (use the Nano switch for
-  `chatterbox-nano`; its tokenizer ships as `vocab.json` + `merges.txt`).
+- **Turbo-family packs** (`t3_turbo_v1.safetensors` / `t3_nano_v1.safetensors`)
+  load through the same **Chatterbox TTS 📢** node as classic packs -- no switch
+  to set. The official packs download into `chatterbox-turbo/` and
+  `chatterbox-turbo-nano/` (Turbo is the family's name upstream; Nano is its
+  smaller member, from `ResembleAI/chatterbox-nano`). Nano's tokenizer ships as
+  `vocab.json` + `merges.txt` rather than `tokenizer.json`; both layouts load.
 - **Flash packs** (`t3_flash.safetensors`, `ResembleAI/chatterbox-flash`) are a
   block-diffusion model in the separate `chatterbox-flash` pip package and are
-  **not supported** by this node; selecting one fails with a message saying so.
-- Classic packs (`t3_cfg.safetensors`) stay on the classic TTS / VC nodes.
+  **not supported**; selecting one fails with a message saying so.
+- Classic packs (`t3_cfg.safetensors`) are the voice-conversion packs too.
+
+Folders from earlier builds named like a pack plus a variant
+(`chatterbox-nano__turbo`) are ordinary packs as far as the scanner is
+concerned and keep loading; rename or delete them at will.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -294,7 +302,7 @@ absent.
 |---|---|---|
 | `watermarking` | `resemble-perth` | `use_watermark` produces watermarked audio. Without it the node runs and outputs plain audio. |
 | `multilingual` | `pykakasi`, `spacy-pkuseg` | CJK and Korean segmentation for the multilingual node. |
-| `turbo` | `pyloudnorm` | Loudness normalisation for the Turbo node. |
+| `turbo` | `pyloudnorm` | Loudness normalisation for Turbo-family packs. |
 
 ```bash
 pip install "ComfyUI-ChatterboxTTS[watermarking]"

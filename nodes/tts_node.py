@@ -148,7 +148,8 @@ class ChatterboxTTSNode(io.ComfyNode):
                     tooltip=(
                         "Classifier-Free Guidance (CFG) weight. Controls how "
                         "strongly the model adheres to the text prompt. Higher "
-                        "values may reduce naturalness."
+                        "values may reduce naturalness. Ignored by "
+                        "Turbo-family packs: their sampler has no CFG."
                     ),
                 ),
                 io.Float.Input(
@@ -171,7 +172,8 @@ class ChatterboxTTSNode(io.ComfyNode):
                     tooltip=(
                         "Sets a minimum probability threshold for nucleus "
                         "sampling (Min-P). Filters out tokens with very low "
-                        "probability."
+                        "probability. Ignored by Turbo-family packs: their "
+                        "sampler has no min-p."
                     ),
                 ),
                 io.Float.Input(
@@ -211,6 +213,33 @@ class ChatterboxTTSNode(io.ComfyNode):
                 # ── END FROZEN BLOCK ──
                 # Appended in this fixed order, after every frozen widget.
                 *runtime_widgets(),
+                # Turbo-family controls. Appended last so every widget index
+                # an existing saved workflow holds is untouched; classic and
+                # multilingual packs ignore both.
+                io.Int.Input(
+                    "top_k",
+                    default=1000,
+                    min=1,
+                    max=5000,
+                    step=1,
+                    tooltip=(
+                        "Limit sampling to the K most likely tokens. 1 is fully "
+                        "greedy, 5000 is effectively unrestricted. Turbo-family "
+                        "packs only (Turbo and Nano): the classic and "
+                        "multilingual samplers have no top-k and ignore this."
+                    ),
+                ),
+                io.Boolean.Input(
+                    "normalize_loudness",
+                    default=True,
+                    tooltip=(
+                        "Normalise the reference clip to a consistent loudness "
+                        "before cloning it. Skipped with a warning when the "
+                        "optional 'pyloudnorm' library is not installed. "
+                        "Turbo-family packs only; ignored by classic and "
+                        "multilingual packs."
+                    ),
+                ),
                 io.Audio.Input(
                     "audio_prompt",
                     optional=True,
@@ -261,10 +290,17 @@ class ChatterboxTTSNode(io.ComfyNode):
         device: str = "auto",
         dtype: str = DTYPE_AUTO,
         attention_mode: str = "sdpa",
+        top_k: int = 1000,
+        normalize_loudness: bool = True,
         audio_prompt: Optional[dict] = None,
         client_id: Optional[str] = None,
     ) -> io.NodeOutput:
         """Synthesise ``text`` and return it as a ComfyUI ``AUDIO`` socket.
+
+        One node serves every TTS pack: the loader routes Turbo/Nano packs to
+        their own entry point, and ``generate_audio`` dispatches on the loaded
+        model -- Turbo-family packs get the top-k sampler and this node's
+        ``top_k``/``normalize_loudness`` widgets, classic packs ignore them.
 
         The vendored ``chatterbox`` package is never imported here: the model
         classes are reached lazily by ``modules.loader``, so importing this
@@ -311,6 +347,8 @@ class ChatterboxTTSNode(io.ComfyNode):
                 max_new_tokens=max_new_tokens,
                 flow_cfg_scale=flow_cfg_scale,
                 use_watermark=use_watermark,
+                top_k=top_k,
+                norm_loudness=normalize_loudness,
             )
         except interrupt_error:
             # InterruptProcessingException derives from BaseException, so this
