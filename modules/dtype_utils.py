@@ -15,6 +15,11 @@ Two things here are load-bearing rather than cosmetic:
   hardware that cannot run bf16 raises instead of handing back a
   ``torch.bfloat16`` the caller will discover three minutes into a CUDA kernel.
   Only ``"auto"`` is a request that ComfyUI gets to answer.
+* **Some frontends are fp32-resident.** The speaker encoder, voice encoder and
+  speech tokenizer are excluded from every cast: their own code hard-casts
+  their inputs to float32, and half-precision there either crashes outright
+  (``Kaldi.fbank``'s FFT has no half-dtype kernel) or mismatches the fp32
+  tensors they are fed.
 """
 
 import logging
@@ -59,6 +64,27 @@ _DTYPE_STR_MAP = {
     torch.float16: DTYPE_FP16,
     torch.float32: DTYPE_FP32,
 }
+
+# Class names of feature-extraction frontends that stay float32 no matter what
+# the cast dtype is. Matched by *name* on purpose: importing the vendor tree
+# here would pull librosa/transformers into every cast call and break the
+# mocked test environment.
+#
+# - ``CAMPPlus`` (s3gen's speaker encoder): its ``inference()`` hard-casts the
+#   fbank features to float32 before the forward, so upstream intends fp32
+#   weights; and the fbank frontend's ``torch.fft.rfft`` has no half-dtype
+#   kernel at all ("Unsupported dtype BFloat16" was the field failure).
+# - ``VoiceEncoder`` (t3's speaker embedding): a cuDNN LSTM over fp32 librosa
+#   mels.
+# - ``S3Tokenizer``: the vendored wrapper over the external ``s3tokenizer``
+#   package, whose mel path and encoder cannot be patched from here.
+# - ``HiFTGenerator`` (the s3gen vocoder): SineGen's harmonic math promotes to
+#   fp32 (``torch.arange`` defaults) and ``torch.istft`` consumes the fp32
+#   window; also the quality-sensitive end of the pipeline, where half
+#   precision buys nothing worth the risk.
+_FP32_RESIDENT_CLASS_NAMES = frozenset(
+    {"CAMPPlus", "VoiceEncoder", "S3Tokenizer", "HiFTGenerator"}
+)
 
 # Explicit dtypes validated against the target device. "fp32" is absent on
 # purpose: it is the universally safe fallback and must always resolve.
@@ -259,19 +285,49 @@ def _quant_resident_module_names(model) -> set:
     }
 
 
+def _fp32_resident_prefixes(model) -> tuple:
+    """``"name."`` prefixes of the fp32-resident frontend modules.
+
+    A resident frontend (see ``_FP32_RESIDENT_CLASS_NAMES``) owns a whole
+    subtree -- ``CAMPPlus`` contains dozens of nested layers -- so protection
+    is by prefix, not by direct-owner match.
+    """
+    return tuple(
+        f"{name}."
+        for name, mod in _iter_named_modules(model)
+        if type(mod).__name__ in _FP32_RESIDENT_CLASS_NAMES
+    )
+
+
+def _fp32_protected_names(model) -> set:
+    """Parameter names under fp32-resident frontends (whole subtree)."""
+    prefixes = _fp32_resident_prefixes(model)
+    if not prefixes:
+        return set()
+    return {
+        name
+        for name, _param in _iter_named_parameters(model)
+        if name.startswith(prefixes)
+    }
+
+
 def representative_dtype(model):
-    """The model's floating-point parameter dtype, ignoring quant storage.
+    """The model's floating-point parameter dtype, ignoring quant and fp32
+    resident storage.
 
     Returns ``None`` when the tree holds no floating parameter at all and the
     model carries no ``dtype`` attribute either.
     """
     try:
         resident_modules = _quant_resident_module_names(model)
+        fp32_prefixes = _fp32_resident_prefixes(model)
         for name, param in _iter_named_parameters(model):
             if not param.dtype.is_floating_point:
                 continue
             owner = name.rpartition(".")[0]
             if owner in resident_modules:
+                continue
+            if fp32_prefixes and name.startswith(fp32_prefixes):
                 continue
             return param.dtype
     except Exception:
@@ -280,8 +336,12 @@ def representative_dtype(model):
 
 
 def _cast_mismatched_params(model, dtype: torch.dtype) -> None:
-    """Cast only floating, unprotected, mismatched parameters, then re-tie."""
-    protected = _quant_protected_names(model)
+    """Cast only floating, unprotected, mismatched parameters, then re-tie.
+
+    Unprotected means: not quant-resident packed storage, and not part of an
+    fp32-resident frontend subtree (see ``_FP32_RESIDENT_CLASS_NAMES``).
+    """
+    protected = _quant_protected_names(model) | _fp32_protected_names(model)
     for name, param in _iter_named_parameters(model):
         if name in protected:
             continue
@@ -320,7 +380,7 @@ def cast_model_to_dtype_if_needed(model, dtype: torch.dtype) -> None:
     if dtype is None:
         return
 
-    protected = _quant_protected_names(model)
+    protected = _quant_protected_names(model) | _fp32_protected_names(model)
 
     mismatched = []
     for name, param in _iter_named_parameters(model):

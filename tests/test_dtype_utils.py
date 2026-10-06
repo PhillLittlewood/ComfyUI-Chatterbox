@@ -478,3 +478,101 @@ class TestPlainPackContainers:
         dtype_utils.cast_model_to_dtype(pack, torch.float16)
         assert current is torch.float32
         assert pack.t3.weight.dtype is torch.float16
+
+
+# Test doubles sharing only the *class names* of the fp32-resident frontends;
+# residency is matched by name so no vendor import is needed here.
+class CAMPPlus(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fc = torch.nn.Linear(4, 4)
+        self.block = torch.nn.Sequential(torch.nn.Linear(4, 4))
+
+
+class VoiceEncoder(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.lstm = torch.nn.LSTM(4, 4)
+
+
+class S3Tokenizer(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.encoder = torch.nn.Linear(4, 4)
+
+
+class HiFTGenerator(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.conv_pre = torch.nn.Conv1d(4, 4, 3)
+
+
+class _FrontendPack:
+    """Plain pack carrying the four fp32-resident frontends in place.
+
+    Mirrors the real packs: ``s3gen.flow`` is the heavy castable path, while
+    ``s3gen.speaker_encoder`` / ``s3gen.tokenizer`` / ``s3gen.mel2wav`` / ``ve``
+    must survive every cast at float32 (see PATCHES.md P-031/P-033 for the two
+    field failures that motivated this).
+    """
+
+    def __init__(self) -> None:
+        self.t3 = torch.nn.Linear(4, 4)
+        s3gen = torch.nn.Module()
+        s3gen.flow = torch.nn.Linear(4, 4)
+        s3gen.speaker_encoder = CAMPPlus()
+        s3gen.tokenizer = S3Tokenizer()
+        s3gen.mel2wav = HiFTGenerator()
+        self.s3gen = s3gen
+        self.ve = VoiceEncoder()
+
+
+class TestFp32ResidentFrontends:
+    def test_frontends_keep_float32_through_a_cast(self) -> None:
+        pack = _FrontendPack()
+        dtype_utils.cast_model_to_dtype(pack, torch.bfloat16)
+        assert pack.t3.weight.dtype is torch.bfloat16
+        assert pack.s3gen.flow.weight.dtype is torch.bfloat16
+        assert pack.s3gen.speaker_encoder.fc.weight.dtype is torch.float32
+        assert pack.s3gen.speaker_encoder.block[0].weight.dtype is torch.float32
+        assert pack.s3gen.tokenizer.encoder.weight.dtype is torch.float32
+        assert pack.s3gen.mel2wav.conv_pre.weight.dtype is torch.float32
+        assert pack.ve.lstm.weight_ih_l0.dtype is torch.float32
+
+    def test_representative_dtype_ignores_residents_after_a_cast(self) -> None:
+        """The fp32 residents must not make a bf16 pack look fp32 again."""
+        pack = _FrontendPack()
+        dtype_utils.cast_model_to_dtype(pack, torch.bfloat16)
+        assert dtype_utils.representative_dtype(pack) is torch.bfloat16
+
+    def test_if_needed_scan_ignores_residents(self) -> None:
+        pack = _FrontendPack()
+        dtype_utils.cast_model_to_dtype(pack, torch.bfloat16)
+        flow_ptr = pack.s3gen.flow.weight.data_ptr()
+        dtype_utils.cast_model_to_dtype_if_needed(pack, torch.bfloat16)
+        assert pack.s3gen.flow.weight.data_ptr() == flow_ptr
+        assert pack.s3gen.speaker_encoder.fc.weight.dtype is torch.float32
+
+    def test_protected_names_cover_the_whole_frontend_subtree(self) -> None:
+        pack = _FrontendPack()
+        protected = dtype_utils._fp32_protected_names(pack)
+        assert "s3gen.speaker_encoder.fc.weight" in protected
+        assert "s3gen.speaker_encoder.block.0.weight" in protected
+        assert "s3gen.tokenizer.encoder.weight" in protected
+        assert "ve.lstm.weight_ih_l0" in protected
+        assert "t3.weight" not in protected
+        assert "s3gen.flow.weight" not in protected
+
+    def test_residency_applies_inside_an_nn_module_handler_too(self) -> None:
+        """The loader registers the inner modules on the handler (an
+        ``nn.Module``) for ComfyUI's own machinery; a cast handed *that* tree
+        must protect the residents too."""
+        pack = _FrontendPack()
+        handler = torch.nn.Module()
+        handler.t3 = pack.t3
+        handler.s3gen = pack.s3gen
+        handler.ve = pack.ve
+        dtype_utils.cast_model_to_dtype(handler, torch.float16)
+        assert handler.s3gen.speaker_encoder.fc.weight.dtype is torch.float32
+        assert handler.s3gen.tokenizer.encoder.weight.dtype is torch.float32
+        assert handler.s3gen.flow.weight.dtype is torch.float16
