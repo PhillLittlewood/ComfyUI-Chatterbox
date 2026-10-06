@@ -139,6 +139,21 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "Downloads into the shared chatterbox-turbo folder; ships an HF tokenizer "
         "(vocab.json + merges.txt), not a tokenizer.json.",
     },
+    # Block-diffusion member (Fast-dLLM-style masked decoder over the same
+    # S3Gen / voice-encoder stack). Not runnable by the vendored 0.1.7 code:
+    # it needs the optional 'chatterbox-flash' package, installed WITHOUT its
+    # dependency block so 'import chatterbox' still resolves to the vendored
+    # tree. No conds.pt ships in the repo, so a reference clip is required.
+    "chatterbox-flash": {
+        "repo_id": "ResembleAI/chatterbox-flash",
+        "folder": "chatterbox-flash",
+        "architecture": "chatterbox_flash",
+        "sample_rate": 24000,
+        "size_gb": 3.1,
+        "files": ["t3_flash.safetensors", "s3gen.safetensors", "ve.safetensors", "tokenizer.json"],
+        "description": "Block-diffusion Chatterbox: fast parallel decoding. Needs the "
+        "optional 'chatterbox-flash' package and a reference audio clip.",
+    },
 }
 
 # Official entries, tagged so the API and the loader can tell them from local
@@ -155,6 +170,7 @@ VALID_CHATTERBOX_ARCHITECTURES = (
     "chatterbox_multilingual",
     "chatterbox_turbo",
     "chatterbox_nano",
+    "chatterbox_flash",
 )
 
 # A file from this set makes a directory a model. ``conds.pt`` is deliberately
@@ -165,6 +181,7 @@ CHATTERBOX_WEIGHT_FILES = (
     "t3_mtl23ls_v3.safetensors",
     "t3_turbo_v1.safetensors",
     "t3_nano_v1.safetensors",
+    "t3_flash.safetensors",
     "ve.safetensors",
     "s3gen.safetensors",
 )
@@ -261,6 +278,8 @@ def _infer_architecture(entries: List[str]) -> Optional[str]:
         return "chatterbox_turbo"
     if "t3_mtl23ls_v2.safetensors" in entries or "t3_mtl23ls_v3.safetensors" in entries:
         return "chatterbox_multilingual"
+    if "t3_flash.safetensors" in entries:
+        return "chatterbox_flash"
     if "t3_cfg.safetensors" in entries:
         return "chatterbox_tts"
     return None

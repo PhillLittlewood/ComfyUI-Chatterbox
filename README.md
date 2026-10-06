@@ -117,7 +117,7 @@ below. Load a ready-made graph from
 
 | Node id | Menu name | Outputs | What it does |
 |---|---|---|---|
-| `ChatterboxTTS` | Chatterbox TTS 📢 | `audio` | Synthesises speech from text, optionally cloning a voice from a short audio prompt. One node for every TTS pack: classic, and the Turbo family (Turbo 350M / Nano 110M) is routed automatically from the pack's contents, with paralinguistic tags and a top-k sampler for Turbo-family packs. |
+| `ChatterboxTTS` | Chatterbox TTS 📢 | `audio` | Synthesises speech from text, optionally cloning a voice from a short audio prompt. One node for every TTS pack: classic, the Turbo family (Turbo 350M / Nano 110M), and Flash are routed automatically from the pack's contents, with paralinguistic tags and a top-k sampler for Turbo-family packs. |
 | `ChatterboxMTLTTS` | Chatterbox Multilingual TTS 🌍 | `audio` | Synthesises speech in 23 languages with the multilingual model, in v1, v2 or v3. |
 | `ChatterboxSRT` | Chatterbox SRT / Subtitles 📝 | `audio`, `generation_info`, `timing_report`, `Adjusted_SRT` | Speaks a timed SRT script and reconciles the model's actual timings with the file's, returning an adjusted subtitle file that matches the audio. |
 | `ChatterboxDialog` | Chatterbox Multi-Speaker Dialog 🎭 | `dialog_audio`, `speaker_a_audio`, `speaker_b_audio`, `speaker_c_audio`, `speaker_d_audio`, `message` | Speaks a `SPEAKER A:` / `SPEAKER B:` conversation with a separate voice per speaker, returning the mixed dialog plus each speaker's isolated stem. |
@@ -218,8 +218,15 @@ downloaded:
   folder. Nano's tokenizer ships as `vocab.json` + `merges.txt` rather than
   `tokenizer.json`; both layouts load.
 - **Flash packs** (`t3_flash.safetensors`, `ResembleAI/chatterbox-flash`) are a
-  block-diffusion model in the separate `chatterbox-flash` pip package and are
-  **not supported**; selecting one fails with a message saying so.
+  block-diffusion model whose sampler lives in the separate
+  [`chatterbox-flash`](https://pypi.org/project/chatterbox-flash/) pip package.
+  Install it **without** its dependency block (it would pull an old `chatterbox`
+  that shadows this node's vendored tree):
+  `python -m pip install --no-deps chatterbox-flash`.
+  Flash loads through the same **Chatterbox TTS 📢** node and has no built-in
+  voice — connect a reference audio clip to the node's audio prompt input.
+  `exaggeration` and `temperature` apply; the classic sampler's knobs
+  (`cfg_weight`, `min_p`, `top_k`, watermarking) do not.
 - Classic packs (`t3_cfg.safetensors`) are the voice-conversion packs too.
 
 Folders from earlier builds named like a pack plus a variant
@@ -306,6 +313,22 @@ absent.
 | `watermarking` | `resemble-perth` | `use_watermark` produces watermarked audio. Without it the node runs and outputs plain audio. |
 | `multilingual` | `pykakasi`, `spacy-pkuseg` | CJK and Korean segmentation for the multilingual node. |
 | `turbo` | `pyloudnorm` | Loudness normalisation for Turbo-family packs. |
+
+```bash
+pip install "ComfyUI-ChatterboxTTS[watermarking]"
+```
+
+The watermarking import is defensive *inside the vendored code itself*, which is
+why the node never crashes on a machine without `resemble-perth`.
+
+There is deliberately **no `[flash]` extra**. A normal pip install of
+`chatterbox-flash` also installs its dependency block, which pulls an old
+`chatterbox` package over this node's vendored tree. Install it by hand, without
+dependencies, into the Python environment ComfyUI runs on:
+
+```bash
+python -m pip install --no-deps chatterbox-flash
+```
 
 ```bash
 pip install "ComfyUI-ChatterboxTTS[watermarking]"

@@ -111,6 +111,7 @@ CHATTERBOX_PATCHER_CACHE: dict[str, ChatterboxPatcher] = _SHARED_PATCHER_CACHE
 #: Turbo pack are as mutually exclusive in VRAM as two classic packs are.
 FAMILY_MTL = "mtl"
 FAMILY_TURBO = "turbo"
+FAMILY_FLASH = "flash"
 
 #: How many intermediate iterations :class:`RefinementCache` keeps. The reference
 #: implementation caps at 5 and its own tooltip says "recommended max 5 passes --
@@ -285,6 +286,27 @@ def _resolve_turbo_variant(model_name: str) -> Optional[str]:
     return None
 
 
+def _resolve_flash_pack(model_name: str) -> bool:
+    """True when ``model_name`` names a Chatterbox Flash pack.
+
+    Same precedence as the Turbo helper: the registry entry's architecture
+    answers first (official entry, or the local one the scan registered),
+    the pack directory's t3 checkpoint second -- a flash dir is only ever its
+    own pack, so contents alone are unambiguous.
+    """
+    try:
+        pack_dir = ChatterboxLoader.resolve_pack_dir(model_name)
+    except ValueError:
+        return False
+
+    entry = model_info.AVAILABLE_CHATTERBOX_MODELS.get(model_name) or {}
+    if entry.get("architecture") == "chatterbox_flash":
+        return True
+    return os.path.isdir(pack_dir) and (
+        model_info.infer_pack_architecture(pack_dir) == "chatterbox_flash"
+    )
+
+
 def load_chatterbox_model(
     model_name: str,
     device: str = "auto",
@@ -331,6 +353,20 @@ def load_chatterbox_model(
     #     serves the whole family. The entry point's own eviction sweep
     #     clears the classic pack this node may still hold, the same way the
     #     classic path below clears a Turbo one.
+    if _resolve_flash_pack(model_name):
+        patcher, tts_model = load_chatterbox_entry_point(
+            model_name,
+            entry_point="flash",
+            variant="flash",
+            family=FAMILY_FLASH,
+            device=device,
+            dtype=dtype,
+            attention_mode=attention_mode,
+            force_reload=force_reload,
+            client_id=client_id,
+        )
+        return patcher, tts_model, None
+
     turbo_variant = _resolve_turbo_variant(model_name)
     if turbo_variant is not None:
         patcher, tts_model = load_chatterbox_entry_point(
@@ -514,6 +550,18 @@ def generate_audio(
     if not text or not text.strip():
         raise ValueError(
             "Chatterbox needs some text to speak. The text input was empty."
+        )
+
+    # Flash dispatch, before the classic progress bar: a block-diffusion
+    # decoder with no token budget to count.
+    if type(model).__name__ == "ChatterboxFlashTTS":
+        return generate_flash_audio(
+            model,
+            text,
+            audio_prompt=audio_prompt,
+            exaggeration=exaggeration,
+            temperature=temperature,
+            seed=seed,
         )
 
     # Turbo-family dispatch, before the classic progress bar: Turbo has no
@@ -936,6 +984,38 @@ def generate_turbo_audio(
                 norm_loudness=bool(norm_loudness),
                 watermark=bool(use_watermark),
             )
+    return _normalise_waveform(waveform), S3GEN_SAMPLE_RATE
+
+
+def generate_flash_audio(
+    model: Any,
+    text: str,
+    audio_prompt: Optional[dict] = None,
+    exaggeration: float = 0.5,
+    temperature: float = 0.8,
+    seed: int = 0,
+) -> tuple[torch.Tensor, int]:
+    """Synthesise ``text`` with a loaded ``ChatterboxFlashTTS``.
+
+    Flash is a block-diffusion decoder: there is no top-k / min-p / CFG
+    surface, and no ``conds.pt`` ships in its repo -- the reference clip is
+    the only voice source, so a prompt is mandatory and conditioning is
+    rebuilt per call exactly like the classic entry point does.
+    """
+    if audio_prompt is None:
+        raise ValueError(
+            "Chatterbox Flash ships no built-in voice -- connect a reference "
+            "audio clip to the node's audio prompt input."
+        )
+
+    set_seed(seed)
+    with _temp_wav_or_none(audio_prompt) as prompt_path:
+        model.prepare_conditionals(prompt_path, exaggeration=exaggeration)
+        waveform = model.generate(
+            text,
+            exaggeration=exaggeration,
+            temperature=temperature,
+        )
     return _normalise_waveform(waveform), S3GEN_SAMPLE_RATE
 
 

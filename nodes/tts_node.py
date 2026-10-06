@@ -225,8 +225,8 @@ class ChatterboxTTSNode(io.ComfyNode):
                     tooltip=(
                         "Limit sampling to the K most likely tokens. 1 is fully "
                         "greedy, 5000 is effectively unrestricted. Turbo-family "
-                        "packs only (Turbo and Nano): the classic and "
-                        "multilingual samplers have no top-k and ignore this."
+                        "packs only (Turbo and Nano): classic, multilingual and "
+                        "Flash packs have no top-k and ignore this."
                     ),
                 ),
                 io.Boolean.Input(
@@ -245,7 +245,9 @@ class ChatterboxTTSNode(io.ComfyNode):
                     optional=True,
                     tooltip=(
                         "Reference audio to clone the voice from. When left "
-                        "unconnected the pack's built-in voice is used."
+                        "unconnected the pack's built-in voice is used. Flash "
+                        "packs ship no built-in voice: a reference clip is "
+                        "required for them."
                     ),
                 ),
             ],

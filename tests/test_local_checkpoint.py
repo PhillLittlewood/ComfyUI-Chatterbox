@@ -527,3 +527,82 @@ class TestIncompleteDirectoryIsRefused:
             "mlt",
         )
         assert calls == [], "a complete multilingual pack was re-downloaded"
+
+
+    def test_a_flash_pack_loads_through_the_flash_entry_point(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """The flash loader checks its own file set, then builds the pack."""
+        pack = tmp_path / "chatterbox-flash"
+        pack.mkdir()
+        for name in ("t3_flash.safetensors", "ve.safetensors", "s3gen.safetensors", "tokenizer.json"):
+            (pack / name).write_bytes(b"\x00" * 4)
+        seen: dict = {}
+
+        class FakeFlashTTS:
+            @classmethod
+            def from_local(cls, ckpt_dir, device):
+                seen["ckpt_dir"] = str(ckpt_dir)
+                return object()
+
+        import sys as _sys
+        import types as _types
+
+        monkeypatch.setattr(
+            ChatterboxLoader, "download_pack",
+            staticmethod(lambda *a, **k: None),
+        )
+        stub = _types.ModuleType("chatterbox_flash")
+        stub.ChatterboxFlashTTS = FakeFlashTTS
+        monkeypatch.setitem(_sys.modules, "chatterbox_flash", stub)
+
+        ChatterboxLoader.load_flash_model(
+            "chatterbox-flash", torch.device("cpu"), model_path=str(pack)
+        )
+        assert seen["ckpt_dir"] == str(pack)
+
+    def test_a_missing_flash_package_names_the_install_command(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(
+            ChatterboxLoader, "download_pack",
+            staticmethod(lambda *a, **k: None),
+        )
+        pack = tmp_path / "chatterbox-flash"
+        pack.mkdir()
+        for name in ("t3_flash.safetensors", "ve.safetensors", "s3gen.safetensors", "tokenizer.json"):
+            (pack / name).write_bytes(b"\x00" * 4)
+        import sys as _sys
+
+        saved = _sys.modules.pop("chatterbox_flash", None)
+        _sys.modules["chatterbox_flash"] = None  # import raises ImportError
+        try:
+            with pytest.raises(FileNotFoundError, match="no-deps"):
+                ChatterboxLoader.load_flash_model(
+                    "chatterbox-flash", torch.device("cpu"), model_path=str(pack)
+                )
+        finally:
+            if saved is not None:
+                _sys.modules["chatterbox_flash"] = saved
+            else:
+                del _sys.modules["chatterbox_flash"]
+
+    def test_an_incomplete_flash_pack_lists_its_own_files(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        pack = tmp_path / "chatterbox-flash"
+        pack.mkdir()
+        (pack / "t3_flash.safetensors").write_bytes(b"\x00" * 4)
+        # The stub keeps the incompleteness refusal from "fixing" the pack
+        # with a real download of the flash repo.
+        monkeypatch.setattr(
+            ChatterboxLoader, "download_pack",
+            staticmethod(lambda *a, **k: None),
+        )
+        with pytest.raises(FileNotFoundError) as caught:
+            ChatterboxLoader.load_flash_model(
+                "chatterbox-flash", torch.device("cpu"), model_path=str(pack)
+            )
+        message = str(caught.value)
+        assert "ve.safetensors" in message and "tokenizer.json" in message
+        assert "t3_cfg.safetensors" not in message

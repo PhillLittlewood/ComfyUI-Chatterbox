@@ -391,3 +391,116 @@ class TestSharedFamilyFolderRouting:
     def test_an_unregistered_shared_folder_still_answers_nano(self, family, monkeypatch) -> None:
         monkeypatch.setattr(gen.model_info, "AVAILABLE_CHATTERBOX_MODELS", {})
         assert gen._resolve_turbo_variant("chatterbox-turbo") == "nano"
+
+
+# ---------------------------------------------------------------------------
+# Flash routing (external chatterbox-flash package)
+# ---------------------------------------------------------------------------
+
+
+class TestFlashDetection:
+    @pytest.fixture()
+    def flash_pack(self, tmp_path, monkeypatch):
+        pack = tmp_path / "chatterbox-flash"
+        pack.mkdir()
+        for name in ("t3_flash.safetensors", "ve.safetensors", "tokenizer.json"):
+            (pack / name).write_bytes(b"\x00" * 4)
+        monkeypatch.setattr(
+            gen.ChatterboxLoader,
+            "resolve_pack_dir",
+            staticmethod(lambda name: str(pack)),
+        )
+        return pack
+
+    def test_a_flash_dir_is_detected_by_its_t3(self, flash_pack, monkeypatch) -> None:
+        monkeypatch.setattr(gen.model_info, "AVAILABLE_CHATTERBOX_MODELS", {})
+        assert gen._resolve_flash_pack("chatterbox-flash") is True
+
+    def test_a_flash_registry_entry_answers_before_the_disk(
+        self, flash_pack, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(
+            gen.model_info,
+            "AVAILABLE_CHATTERBOX_MODELS",
+            {"chatterbox-flash": {"architecture": "chatterbox_flash"}},
+        )
+        assert gen._resolve_flash_pack("chatterbox-flash") is True
+
+    def test_a_classic_pack_is_not_flash(self, tmp_path, monkeypatch) -> None:
+        pack = tmp_path / "classic"
+        pack.mkdir()
+        (pack / "t3_cfg.safetensors").write_bytes(b"\x00" * 4)
+        monkeypatch.setattr(
+            gen.ChatterboxLoader,
+            "resolve_pack_dir",
+            staticmethod(lambda name: str(pack)),
+        )
+        monkeypatch.setattr(gen.model_info, "AVAILABLE_CHATTERBOX_MODELS", {})
+        assert gen._resolve_flash_pack("classic") is False
+
+
+class TestFlashRoutingAndDispatch:
+    def test_load_chatterbox_model_routes_flash(self, tmp_path, monkeypatch) -> None:
+        pack = tmp_path / "chatterbox-flash"
+        pack.mkdir()
+        (pack / "t3_flash.safetensors").write_bytes(b"\x00" * 4)
+        monkeypatch.setattr(
+            gen.ChatterboxLoader,
+            "resolve_pack_dir",
+            staticmethod(lambda name: str(pack)),
+        )
+        monkeypatch.setattr(gen.model_info, "AVAILABLE_CHATTERBOX_MODELS", {})
+        seen: dict = {}
+
+        def _fake_entry_point(model_name, **kwargs):
+            seen["model_name"] = model_name
+            seen.update(kwargs)
+            return object(), object()
+
+        monkeypatch.setattr(gen, "load_chatterbox_entry_point", _fake_entry_point)
+
+        patcher, model, vc = load_chatterbox_model("chatterbox-flash")
+
+        assert vc is None
+        assert seen["entry_point"] == "flash"
+        assert seen["variant"] == "flash"
+        assert seen["family"] == gen.FAMILY_FLASH
+
+    def test_a_flash_model_gets_the_block_diffusion_sampler(self) -> None:
+        class ChatterboxFlashTTS:
+            def __init__(self) -> None:
+                self.calls: list[dict] = []
+                self.cond_calls: list[dict] = []
+
+            def prepare_conditionals(self, path, exaggeration=0.5):
+                self.cond_calls.append({"path": path, "exaggeration": exaggeration})
+
+            def generate(self, *args, **kwargs) -> torch.Tensor:
+                self.calls.append({"args": list(args), **kwargs})
+                return torch.zeros((1, 24000))
+
+        model = ChatterboxFlashTTS()
+        waveform, rate = generate_audio(
+            model,
+            "hello flash",
+            audio_prompt={"waveform": torch.zeros(1, 24000), "sample_rate": 24000},
+            exaggeration=0.7,
+            temperature=0.6,
+            top_k=64,
+            seed=3,
+        )
+        assert rate == 24000 and waveform.shape == (1, 24000)
+        assert model.cond_calls[0]["exaggeration"] == 0.7
+        assert model.cond_calls[0]["path"].endswith(".wav")
+        call = model.calls[0]
+        assert call["exaggeration"] == 0.7
+        assert call["temperature"] == 0.6
+        assert "top_k" not in call and "cfg_weight" not in call
+        assert "min_p" not in call and "max_new_tokens" not in call
+
+    def test_flash_without_a_reference_clip_is_refused(self) -> None:
+        class ChatterboxFlashTTS:
+            pass
+
+        with pytest.raises(ValueError, match="reference"):
+            generate_audio(ChatterboxFlashTTS(), "hello flash")

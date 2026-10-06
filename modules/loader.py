@@ -112,13 +112,12 @@ def _refuse_wrong_variant_pack(pack_dir: str, model_name: str, entry_point: str)
     except OSError:
         return
 
-    if _FLASH_T3_FILE in entries:
+    if _FLASH_T3_FILE in entries and entry_point != "flash":
         raise FileNotFoundError(
             f"The pack '{model_name}' at '{pack_dir}' is Chatterbox Flash, a "
-            "block-diffusion model that ships in the separate "
-            "'chatterbox-flash' package. This node's vendored Chatterbox "
-            "(0.1.7) cannot run it -- use a classic, Turbo or Nano pack "
-            "instead."
+            "block-diffusion model. Only the Chatterbox TTS node runs it -- "
+            "and only once the optional 'chatterbox-flash' package is "
+            "installed (pip install --no-deps chatterbox-flash)."
         )
 
     turbo_shaped = any(name in entries for name in _TURBO_T3_FILES)
@@ -334,6 +333,16 @@ class ChatterboxModelHandler(torch.nn.Module):
                     self.model_pack_name,
                     device,
                     nano=self.variant == "nano",
+                    client_id=client_id,
+                    model_path=self.model_path,
+                ),
+                None,
+            )
+        elif self.entry_point == "flash":
+            tts_model, vc_model = (
+                ChatterboxLoader.load_flash_model(
+                    self.model_pack_name,
+                    device,
                     client_id=client_id,
                     model_path=self.model_path,
                 ),
@@ -888,3 +897,79 @@ class ChatterboxLoader:
             device,
         )
         return ChatterboxTurboTTS.from_local(pack_dir, str(device), nano=nano)
+
+    @staticmethod
+    def load_flash_model(
+        model_name: str,
+        device: torch.device,
+        client_id: Optional[str] = None,
+        model_path: Optional[str] = None,
+    ) -> Any:
+        """Build ``ChatterboxFlashTTS`` from an external, optional package.
+
+        Flash is block-diffusion T3 (a Fast-dLLM-style masked decoder) shipped
+        in the separate ``chatterbox-flash`` package -- the vendored Chatterbox
+        0.1.7 has no such decoder. That package is deliberately installed
+        ``--no-deps``: its dependency block would pull a pip copy of
+        ``chatterbox-tts`` that shadows the vendored (patched) tree, while the
+        code itself imports ``S3Gen`` / ``VoiceEncoder`` / ``T3Cond`` from
+        ``chatterbox`` -- i.e. from this node's vendored sources, bf16 patches
+        included.
+
+        Flash ships no ``conds.pt``, so a reference clip is mandatory; the
+        node-level dispatch refuses generation without one.
+
+        Args:
+            model_name: Pack name or directory basename.
+            device: Where the weights should live.
+            client_id: Websocket id for a first-run download.
+            model_path: Pack directory; resolved from ``model_name`` when omitted.
+
+        Returns:
+            A loaded ``ChatterboxFlashTTS``.
+
+        Raises:
+            FileNotFoundError: The package is missing (with the install
+                command), or the checkpoint is missing files.
+        """
+        pack_dir = model_path or ChatterboxLoader.resolve_pack_dir(model_name)
+        required = (
+            "ve.safetensors",
+            "s3gen.safetensors",
+            "t3_flash.safetensors",
+            "tokenizer.json",
+        )
+        ChatterboxLoader._ensure_entry_point_dir(
+            pack_dir,
+            "ResembleAI/chatterbox-flash",
+            required,
+            model_name,
+            client_id,
+        )
+
+        missing = ChatterboxLoader._missing_checkpoint_files(pack_dir, required)
+        if missing:
+            raise FileNotFoundError(
+                f"The Chatterbox Flash checkpoint at '{pack_dir}' is "
+                f"incomplete. Missing: {', '.join(missing)}. A complete pack "
+                f"holds {', '.join(required)}."
+            )
+
+        try:
+            from chatterbox_flash import ChatterboxFlashTTS
+        except ImportError as exc:
+            raise FileNotFoundError(
+                f"The Flash pack '{model_name}' needs the optional "
+                "'chatterbox-flash' package, which is not installed. Install "
+                "it WITHOUT its dependency block so it uses this node's "
+                "vendored Chatterbox: "
+                "python -m pip install --no-deps chatterbox-flash"
+            ) from exc
+
+        logging.info(
+            "[Chatterbox TTS] Building Flash '%s' from '%s' on %s...",
+            model_name,
+            pack_dir,
+            device,
+        )
+        return ChatterboxFlashTTS.from_local(pack_dir, str(device))
