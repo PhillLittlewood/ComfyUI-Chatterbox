@@ -394,7 +394,7 @@ class TestSharedFamilyFolderRouting:
 
 
 # ---------------------------------------------------------------------------
-# Flash routing (external chatterbox-flash package)
+# Flash routing (the vendored chatterbox-flash sampler)
 # ---------------------------------------------------------------------------
 
 

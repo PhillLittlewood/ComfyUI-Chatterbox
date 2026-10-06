@@ -147,6 +147,16 @@ ALLOWANCES: tuple[Allowance, ...] = (
         ),
         max_lines=8,
     ),
+    Allowance(
+        path="src/chatterbox-flash/chatterbox_flash/eval/wer_seedtts.py",
+        reason=(
+            "Vendored upstream 0.1.0, byte-exact: its transcript-error logging "
+            "string interleaves a placeholder, a colon and a newline escape, "
+            "and the drive-letter regex reads that escape as a path separator. "
+            "No path is present."
+        ),
+        max_lines=1,
+    ),
 )
 
 ALLOWED = {allowance.path: allowance for allowance in ALLOWANCES}

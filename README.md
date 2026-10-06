@@ -218,15 +218,14 @@ downloaded:
   folder. Nano's tokenizer ships as `vocab.json` + `merges.txt` rather than
   `tokenizer.json`; both layouts load.
 - **Flash packs** (`t3_flash.safetensors`, `ResembleAI/chatterbox-flash`) are a
-  block-diffusion model whose sampler lives in the separate
-  [`chatterbox-flash`](https://pypi.org/project/chatterbox-flash/) pip package.
-  Install it **without** its dependency block (it would pull an old `chatterbox`
-  that shadows this node's vendored tree):
-  `python -m pip install --no-deps chatterbox-flash`.
+  block-diffusion model whose sampler ships **vendored with this node** at
+  `src/chatterbox-flash/` — nothing to install, it works out of the box.
   Flash loads through the same **Chatterbox TTS 📢** node and has no built-in
   voice — connect a reference audio clip to the node's audio prompt input.
   `exaggeration` and `temperature` apply; the classic sampler's knobs
-  (`cfg_weight`, `min_p`, `top_k`, watermarking) do not.
+  (`cfg_weight`, `min_p`, `top_k`, watermarking) do not. Do **not**
+  pip-install `chatterbox-flash` yourself: its dependency block pulls an old
+  `chatterbox` package over this node's vendored, patched tree.
 - Classic packs (`t3_cfg.safetensors`) are the voice-conversion packs too.
 
 Folders from earlier builds named like a pack plus a variant
@@ -321,13 +320,14 @@ pip install "ComfyUI-ChatterboxTTS[watermarking]"
 The watermarking import is defensive *inside the vendored code itself*, which is
 why the node never crashes on a machine without `resemble-perth`.
 
-There is deliberately **no `[flash]` extra**. A normal pip install of
-`chatterbox-flash` also installs its dependency block, which pulls an old
-`chatterbox` package over this node's vendored tree. Install it by hand, without
-dependencies, into the Python environment ComfyUI runs on:
+There is deliberately **no `[flash]` extra** because none is needed: the Flash
+sampler is vendored at `src/chatterbox-flash/` and imports with the node. If
+you ever installed `chatterbox-flash` by hand, remove it — a pip copy (and the
+`chatterbox` package its dependency block drags in) would shadow this node's
+vendored, patched sources:
 
 ```bash
-python -m pip install --no-deps chatterbox-flash
+python -m pip uninstall chatterbox-flash
 ```
 
 ```bash

@@ -29,6 +29,8 @@ from conftest import ROOT_DIR
 
 SRC_DIR = os.path.join(ROOT_DIR, "src")
 
+FLASH_DIR = os.path.join(SRC_DIR, "chatterbox-flash")
+
 MODULES_DIR = os.path.join(ROOT_DIR, "modules")
 
 
@@ -52,11 +54,12 @@ def vendor_loader():
 
 @pytest.fixture
 def clean_sys_path():
-    """``sys.path`` without our ``src/``, restored however the test ends."""
+    """``sys.path`` without our vendored roots, restored however the test ends."""
     original = list(sys.path)
     try:
-        while SRC_DIR in sys.path:
-            sys.path.remove(SRC_DIR)
+        for entry in (SRC_DIR, FLASH_DIR):
+            while entry in sys.path:
+                sys.path.remove(entry)
         yield
     finally:
         sys.path[:] = original
@@ -65,9 +68,9 @@ def clean_sys_path():
 class TestAppendSemantics:
     def test_src_lands_at_the_tail(self, vendor_loader, clean_sys_path) -> None:
         vendor_loader.ensure_vendor_on_path()
-        assert sys.path[-1] == SRC_DIR, (
-            "the vendored src/ must be appended, so anything already importable "
-            "keeps winning"
+        assert sys.path[-2:] == [SRC_DIR, FLASH_DIR], (
+            "the vendored roots must be appended in order (src/ first, the "
+            "Flash package after it), so anything already importable keeps winning"
         )
 
     def test_nothing_is_inserted_ahead_of_the_existing_entries(
@@ -79,8 +82,8 @@ class TestAppendSemantics:
             "an existing entry was reordered; a pip-installed chatterbox or "
             "site-packages entry has to keep winning"
         )
-        assert sys.path[len(before):] == [SRC_DIR], (
-            f"expected exactly one appended entry, got {sys.path[len(before):]}"
+        assert sys.path[len(before):] == [SRC_DIR, FLASH_DIR], (
+            f"expected exactly the two vendored roots appended, got {sys.path[len(before):]}"
         )
 
     def test_idempotent_across_repeated_calls(self, vendor_loader, clean_sys_path) -> None:
@@ -162,9 +165,11 @@ PROBE = textwrap.dedent(
 
     result = {{
         'added': delta,
-        'is_tail': sys.path[-1] == {src_dir!r},
+        'is_tail': sys.path[-1] == {flash_dir!r},
+        'flash_count': sys.path.count({flash_dir!r}),
         'index': sys.path.index({src_dir!r}),
         'count': sys.path.count({src_dir!r}),
+        'sys_path_len': len(sys.path),
     }}
 
     try:
@@ -191,7 +196,9 @@ PROBE = textwrap.dedent(
 
 
 def run_probe() -> dict:
-    script = PROBE.format(modules_dir=MODULES_DIR, src_dir=SRC_DIR)
+    script = PROBE.format(
+        modules_dir=MODULES_DIR, src_dir=SRC_DIR, flash_dir=FLASH_DIR
+    )
     completed = subprocess.run(
         [sys.executable, "-c", script],
         cwd=ROOT_DIR,
@@ -230,12 +237,14 @@ KNOWN_EXTERNAL_REQUIREMENTS = (
 
 
 class TestRealVendorResolvesAfterTheLoaderRuns:
-    def test_loader_appends_exactly_one_entry_at_the_tail(self, probe: dict) -> None:
-        assert probe["added"] == [SRC_DIR], (
-            f"the loader added {probe['added']!r}; it must add src/ and nothing else"
+    def test_loader_appends_exactly_the_vendored_roots_at_the_tail(self, probe: dict) -> None:
+        assert probe["added"] == [SRC_DIR, FLASH_DIR], (
+            f"the loader added {probe['added']!r}; it must add exactly the "
+            f"vendored roots src/ and src/chatterbox-flash/ and nothing else"
         )
         assert probe["is_tail"] is True
         assert probe["count"] == 1
+        assert probe["flash_count"] == 1
 
     def test_vendor_entry_points_import(self, probe: dict) -> None:
         if probe["import_kind"] != "ok":

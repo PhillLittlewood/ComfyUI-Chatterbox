@@ -104,8 +104,8 @@ def _refuse_wrong_variant_pack(pack_dir: str, model_name: str, entry_point: str)
     pack. The error the wrong pairing produced before was a missing-file list
     that read like a broken download, sending the user hunting for files their
     pack was never supposed to hold. Flash is refused by every entry point:
-    it is a block-diffusion model shipped in the separate ``chatterbox-flash``
-    package, which the vendored Chatterbox cannot run.
+    it is a block-diffusion model only the Chatterbox TTS node (and its
+    vendored Flash sampler) can run.
     """
     try:
         entries = set(os.listdir(pack_dir))
@@ -115,9 +115,7 @@ def _refuse_wrong_variant_pack(pack_dir: str, model_name: str, entry_point: str)
     if _FLASH_T3_FILE in entries and entry_point != "flash":
         raise FileNotFoundError(
             f"The pack '{model_name}' at '{pack_dir}' is Chatterbox Flash, a "
-            "block-diffusion model. Only the Chatterbox TTS node runs it -- "
-            "and only once the optional 'chatterbox-flash' package is "
-            "installed (pip install --no-deps chatterbox-flash)."
+            "block-diffusion model. Only the Chatterbox TTS node runs it."
         )
 
     turbo_shaped = any(name in entries for name in _TURBO_T3_FILES)
@@ -905,16 +903,16 @@ class ChatterboxLoader:
         client_id: Optional[str] = None,
         model_path: Optional[str] = None,
     ) -> Any:
-        """Build ``ChatterboxFlashTTS`` from an external, optional package.
+        """Build ``ChatterboxFlashTTS`` from the vendored sampler package.
 
         Flash is block-diffusion T3 (a Fast-dLLM-style masked decoder) shipped
-        in the separate ``chatterbox-flash`` package -- the vendored Chatterbox
-        0.1.7 has no such decoder. That package is deliberately installed
-        ``--no-deps``: its dependency block would pull a pip copy of
-        ``chatterbox-tts`` that shadows the vendored (patched) tree, while the
-        code itself imports ``S3Gen`` / ``VoiceEncoder`` / ``T3Cond`` from
-        ``chatterbox`` -- i.e. from this node's vendored sources, bf16 patches
-        included.
+        in the ``chatterbox-flash`` package -- the vendored Chatterbox 0.1.7
+        has no such decoder. That package is vendored by this node at
+        ``src/chatterbox-flash/`` (never pip-installed): its dependency block
+        would pull a pip copy of ``chatterbox-tts`` that shadows the vendored
+        (patched) tree, while the code itself imports ``S3Gen`` /
+        ``VoiceEncoder`` / ``T3Cond`` from ``chatterbox`` -- i.e. from this
+        node's vendored sources, bf16 patches included.
 
         Flash ships no ``conds.pt``, so a reference clip is mandatory; the
         node-level dispatch refuses generation without one.
@@ -929,8 +927,8 @@ class ChatterboxLoader:
             A loaded ``ChatterboxFlashTTS``.
 
         Raises:
-            FileNotFoundError: The package is missing (with the install
-                command), or the checkpoint is missing files.
+            FileNotFoundError: The vendored package failed to import (with a
+                never-pip-install warning), or the checkpoint is missing files.
         """
         pack_dir = model_path or ChatterboxLoader.resolve_pack_dir(model_name)
         required = (
@@ -959,11 +957,12 @@ class ChatterboxLoader:
             from chatterbox_flash import ChatterboxFlashTTS
         except ImportError as exc:
             raise FileNotFoundError(
-                f"The Flash pack '{model_name}' needs the optional "
-                "'chatterbox-flash' package, which is not installed. Install "
-                "it WITHOUT its dependency block so it uses this node's "
-                "vendored Chatterbox: "
-                "python -m pip install --no-deps chatterbox-flash"
+                f"The Flash pack '{model_name}' needs this node's vendored "
+                "'chatterbox-flash' package (src/chatterbox-flash), which "
+                "failed to import. The node checkout may be incomplete or "
+                "damaged -- re-install or update the node. Do NOT pip-install "
+                "'chatterbox-flash': its dependency block would pull a pip "
+                "Chatterbox that shadows this node's vendored sources."
             ) from exc
 
         logging.info(

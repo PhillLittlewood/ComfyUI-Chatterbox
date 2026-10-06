@@ -32,6 +32,7 @@ from conftest import ROOT_DIR, PKG_ALIAS
 # Paths relative to the repository root that are never scanned.
 EXCLUDED_PREFIXES: tuple[str, ...] = (
     "src/chatterbox/",  # vendored upstream; imported as `chatterbox.*`
+    "src/chatterbox-flash/",  # vendored Flash sampler; imported as `chatterbox_flash.*`
     "tests/",  # the test suite itself, and its helpers
 )
 
@@ -268,7 +269,10 @@ class TestNoDeadModules:
 
     def test_the_vendored_tree_is_excluded_not_forgotten(self, graph: dict) -> None:
         """The exclusion is deliberate; assert it is still scoped tightly."""
-        assert not any(path.startswith("src/chatterbox/") for path in graph["files"])
+        assert not any(
+            path.startswith(("src/chatterbox/", "src/chatterbox-flash/"))
+            for path in graph["files"]
+        )
         assert "src/hf_progress/__init__.py" not in EXCLUDED_PREFIXES
 
     def test_entry_point_reaches_the_vendor_loader(self, graph: dict) -> None:

@@ -472,7 +472,7 @@ class TestIncompleteDirectoryIsRefused:
         )
 
     def test_a_flash_pack_is_refused_by_name_before_any_download(self, tmp_path, monkeypatch) -> None:
-        """Flash ships in a separate package; the refusal must not trigger one.
+        """Flash ships in its own (vendored) package; the refusal must not trigger one.
 
         The guard runs before ``_ensure_entry_point_dir``, so selecting a Flash
         pack can never start downloading the Turbo repo into the Flash
@@ -561,9 +561,15 @@ class TestIncompleteDirectoryIsRefused:
         )
         assert seen["ckpt_dir"] == str(pack)
 
-    def test_a_missing_flash_package_names_the_install_command(
+    def test_a_failed_flash_import_names_the_vendored_tree_and_bans_pip(
         self, tmp_path, monkeypatch
     ) -> None:
+        """A dead ``chatterbox_flash`` import blames the checkout, not pip.
+
+        The package is vendored, so the message must point at
+        ``src/chatterbox-flash`` and forbid a pip install (whose dependency
+        block would shadow the vendored Chatterbox) rather than name one.
+        """
         monkeypatch.setattr(
             ChatterboxLoader, "download_pack",
             staticmethod(lambda *a, **k: None),
@@ -577,7 +583,7 @@ class TestIncompleteDirectoryIsRefused:
         saved = _sys.modules.pop("chatterbox_flash", None)
         _sys.modules["chatterbox_flash"] = None  # import raises ImportError
         try:
-            with pytest.raises(FileNotFoundError, match="no-deps"):
+            with pytest.raises(FileNotFoundError) as caught:
                 ChatterboxLoader.load_flash_model(
                     "chatterbox-flash", torch.device("cpu"), model_path=str(pack)
                 )
@@ -586,6 +592,9 @@ class TestIncompleteDirectoryIsRefused:
                 _sys.modules["chatterbox_flash"] = saved
             else:
                 del _sys.modules["chatterbox_flash"]
+        message = str(caught.value)
+        assert "src/chatterbox-flash" in message
+        assert "pip-install" in message and "no-deps" not in message
 
     def test_an_incomplete_flash_pack_lists_its_own_files(
         self, tmp_path, monkeypatch
