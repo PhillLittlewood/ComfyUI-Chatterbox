@@ -221,7 +221,14 @@ class TestPyprojectMetadata:
         assert project(pyproject)["name"]
 
     def test_name_carries_no_registry_prefix(self, pyproject: dict) -> None:
-        """The registry prepends ``ComfyUI-``; a prefix here doubles it."""
+        """The registry prepends ``ComfyUI-``; a prefix here doubles it.
+
+        If this fails with ``ComfyUI-ChatterboxTTS`` on an otherwise clean
+        tree: something on a running ComfyUI install (ComfyUI-Manager's
+        registry-metadata fix) rewrites the name back to the comfyregistry DB
+        value. Restore it with ``git checkout -- pyproject.toml``; the rewrite
+        stops once 2.0.0 is registered under the new name.
+        """
         name = project(pyproject)["name"]
         assert not name.lower().startswith("comfyui"), (
             f"{name!r} would be published as 'ComfyUI-{name}'"
