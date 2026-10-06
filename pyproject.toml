@@ -1,5 +1,5 @@
 [project]
-name = "chatterbox-tts-node"
+name = "ComfyUI-ChatterboxTTS"
 description = "Chatterbox TTS and voice conversion nodes for ComfyUI"
 version = "2.0.0"
 license = {file = "LICENSE"}

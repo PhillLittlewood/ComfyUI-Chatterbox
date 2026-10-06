@@ -220,19 +220,15 @@ class TestPyprojectMetadata:
     def test_pyproject_parses(self, pyproject: dict) -> None:
         assert project(pyproject)["name"]
 
-    def test_name_carries_no_registry_prefix(self, pyproject: dict) -> None:
-        """The registry prepends ``ComfyUI-``; a prefix here doubles it.
+    def test_name_is_the_registered_name(self, pyproject: dict) -> None:
+        """The registry entry is immutable: do not rename the package.
 
-        If this fails with ``ComfyUI-ChatterboxTTS`` on an otherwise clean
-        tree: something on a running ComfyUI install (ComfyUI-Manager's
-        registry-metadata fix) rewrites the name back to the comfyregistry DB
-        value. Restore it with ``git checkout -- pyproject.toml``; the rewrite
-        stops once 2.0.0 is registered under the new name.
+        The node is registered on comfyregistry as ``ComfyUI-ChatterboxTTS``;
+        changing the ``name`` breaks the registry identity (and
+        ComfyUI-Manager rewrites the file back anyway). If this test fails,
+        revert the edit -- the name is not ours to change.
         """
-        name = project(pyproject)["name"]
-        assert not name.lower().startswith("comfyui"), (
-            f"{name!r} would be published as 'ComfyUI-{name}'"
-        )
+        assert project(pyproject)["name"] == "ComfyUI-ChatterboxTTS"
 
     def test_registry_identity_is_present(self, pyproject: dict) -> None:
         comfy = pyproject["tool"]["comfy"]
