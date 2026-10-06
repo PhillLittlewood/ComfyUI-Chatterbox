@@ -1,0 +1,164 @@
+"""Cached discovery of the Chatterbox model packs on disk.
+
+The pack combo on the TTS and VC nodes is a dynamic list: ComfyUI rebuilds
+every node's schema whenever the frontend refreshes, and each rebuild used to
+``listdir`` the models root again. This module exists so that walk happens
+once per change and not once per widget render.
+
+The cache key is the models root's ``st_mtime_ns`` (plus its inode, so a
+directory replaced by a fresh one at the same path is not mistaken for the
+old one). Any change to the root's entries updates that timestamp, so the
+check is a single ``stat`` -- far cheaper than the ``scandir`` it guards.
+
+Ported from the pack scanning in ``ComfyUI-VoxCPM/modules/api_routes.py`` and
+the deleted V1 ``chatterbox_handler.py`` (plan S4.7), with the cache added.
+
+This module never imports the ComfyUI node-API package, ``comfy.*`` or ``server``.
+``folder_paths`` is imported lazily, inside :func:`get_models_root`, so the
+module works without ComfyUI running.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from typing import Dict, List, Optional, Tuple
+
+from .constants import CHATTERBOX_MODEL_SUBDIR, DEFAULT_MODEL_PACK_NAME
+
+
+__all__ = [
+    "get_models_root",
+    "get_chatterbox_model_pack_names",
+    "get_model_pack_path",
+    "get_model_pack_entries",
+    "invalidate_cache",
+]
+
+# Cache state. ``_packs`` is None before the first scan. The key is
+# (st_mtime_ns, st_ino) of the models root; a missing root keys on None, which
+# is stable, so a missing directory is also cached rather than re-probed.
+_cache: Dict[str, object] = {"key": "unset", "packs": None}
+
+
+def get_models_root() -> str:
+    """``<models>/tts/chatterbox``, resolved lazily.
+
+    Falls back to a relative ``models/tts/chatterbox`` when ``folder_paths`` is
+    unavailable, so the module imports and runs outside ComfyUI.
+    """
+    try:
+        import folder_paths
+    except ImportError:
+        logging.debug(
+            "[Chatterbox TTS] folder_paths is not importable; resolving the "
+            "Chatterbox models root relative to the working directory"
+        )
+        return os.path.join("models", CHATTERBOX_MODEL_SUBDIR)
+
+    try:
+        tts_paths = folder_paths.get_folder_paths("tts")
+    except Exception as exc:  # noqa: BLE001 -- an unregistered folder is normal
+        logging.debug("[Chatterbox TTS] No 'tts' folder registered with ComfyUI: %s", exc)
+        tts_paths = None
+    if tts_paths:
+        return os.path.join(tts_paths[0], os.path.basename(CHATTERBOX_MODEL_SUBDIR))
+
+    try:
+        return os.path.join(folder_paths.models_dir, CHATTERBOX_MODEL_SUBDIR)
+    except Exception as exc:  # noqa: BLE001 -- a broken ComfyUI must not break the schema
+        logging.debug("[Chatterbox TTS] Could not resolve models_dir: %s", exc)
+
+    return os.path.join("models", CHATTERBOX_MODEL_SUBDIR)
+
+
+def _root_key(root: str) -> Optional[Tuple[int, int]]:
+    """``(st_mtime_ns, st_ino)`` of ``root``, or ``None`` when it is absent."""
+    try:
+        stat_result = os.stat(root)
+    except OSError:
+        return None
+    return (stat_result.st_mtime_ns, stat_result.st_ino)
+
+
+def _scan(root: str) -> List[Tuple[str, str]]:
+    """Every subdirectory of ``root``, as sorted ``(name, path)`` pairs.
+
+    Uses ``os.scandir`` rather than ``os.listdir`` so the directory is read
+    once and each entry's type comes from the readdir data already in hand.
+    Every subdirectory counts as a pack: a partially downloaded one must stay
+    selectable so the download can finish it.
+    """
+    packs: List[Tuple[str, str]] = []
+    try:
+        with os.scandir(root) as entries:
+            for entry in entries:
+                try:
+                    if entry.is_dir():
+                        packs.append((entry.name, entry.path))
+                except OSError as exc:
+                    # A pack deleted mid-scan is not a reason to lose the rest.
+                    logging.debug(
+                        "[Chatterbox TTS] Skipping '%s' during the pack scan: %s",
+                        entry.name,
+                        exc,
+                    )
+    except OSError as exc:
+        logging.debug("[Chatterbox TTS] Could not scan '%s': %s", root, exc)
+        return []
+
+    # Sort by name, then hoist the default pack so a freshly saved workflow
+    # that carries no widget value lands on the official voice rather than
+    # whatever sorts first alphabetically.
+    packs.sort(key=lambda pair: pair[0])
+    for index, (name, _path) in enumerate(packs):
+        if name == DEFAULT_MODEL_PACK_NAME:
+            default_pack = packs.pop(index)
+            packs.insert(0, default_pack)
+            break
+    return packs
+
+
+def get_model_pack_entries() -> List[Tuple[str, str]]:
+    """``(name, path)`` for every pack, served from cache when unchanged."""
+    root = get_models_root()
+    key = _root_key(root)
+
+    if _cache["packs"] is not None and _cache["key"] == key:
+        return list(_cache["packs"])  # type: ignore[call-overload]
+
+    packs = _scan(root)
+    _cache["key"] = key
+    _cache["packs"] = packs
+    logging.debug("[Chatterbox TTS] Scanned %d Chatterbox pack(s) under '%s'", len(packs), root)
+    return list(packs)
+
+
+def get_chatterbox_model_pack_names() -> List[str]:
+    """Every selectable pack name, default pack first.
+
+    Never returns an empty list: when nothing is on disk the default pack is
+    still offered, because selecting it is what triggers the download.
+    """
+    names = [name for name, _path in get_model_pack_entries()]
+    if not names:
+        return [DEFAULT_MODEL_PACK_NAME]
+    return names
+
+
+def get_model_pack_path(model_pack_name: Optional[str]) -> Optional[str]:
+    """Absolute path of ``model_pack_name``, or ``None`` for a blank name.
+
+    ``None`` for empty input is deliberate: a saved workflow can carry an
+    empty combo value, and the loader turns ``None`` into a clear message
+    instead of resolving to the models root and loading the wrong thing.
+    """
+    if not model_pack_name:
+        return None
+    return os.path.join(get_models_root(), model_pack_name)
+
+
+def invalidate_cache() -> None:
+    """Force the next scan to hit the filesystem."""
+    _cache["key"] = "unset"
+    _cache["packs"] = None
