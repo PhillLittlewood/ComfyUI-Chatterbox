@@ -303,3 +303,62 @@ class TestModuleHygiene:
         }
         assert "scandir" in called
         assert "listdir" not in called
+
+# ---------------------------------------------------------------------------
+# Turbo-family folder: one directory, two dropdown entries
+# ---------------------------------------------------------------------------
+
+
+class TestTurboFamilyFolderIsOfferedTwice:
+    def test_a_folder_with_both_t3_checkpoints_is_offered_twice(self, models_root) -> None:
+        family = models_root / "chatterbox-turbo"
+        family.mkdir()
+        for name in ("t3_turbo_v1.safetensors", "t3_nano_v1.safetensors", "ve.safetensors"):
+            (family / name).write_bytes(b"\x00" * 4)
+
+        entries = get_model_pack_entries()
+
+        assert [name for name, _path in entries] == [
+            "chatterbox-turbo",
+            "chatterbox-turbo-nano",
+        ]
+        assert entries[0][1] == entries[1][1] == str(family)
+
+    def test_the_synthesized_name_yields_to_a_real_directory(self, models_root) -> None:
+        family = models_root / "chatterbox-turbo"
+        family.mkdir()
+        for name in ("t3_turbo_v1.safetensors", "t3_nano_v1.safetensors"):
+            (family / name).write_bytes(b"\x00" * 4)
+        real = models_root / "chatterbox-turbo-nano"
+        real.mkdir()
+
+        paths = dict(get_model_pack_entries())
+
+        assert paths["chatterbox-turbo"] == str(family)
+        assert paths["chatterbox-turbo-nano"] == str(real)
+
+    def test_a_single_variant_folder_is_offered_once(self, models_root) -> None:
+        pack = models_root / "chatterbox-turbo"
+        pack.mkdir()
+        (pack / "t3_turbo_v1.safetensors").write_bytes(b"\x00" * 4)
+
+        assert [name for name, _path in get_model_pack_entries()] == ["chatterbox-turbo"]
+
+    def test_resolve_pack_dir_honours_the_entry_folder(self, models_root, monkeypatch) -> None:
+        """The Nano member downloads into the shared Turbo folder."""
+        from ComfyUI_Chatterbox.modules import model_info
+        from ComfyUI_Chatterbox.modules.loader import ChatterboxLoader
+
+        registry = dict(model_info.AVAILABLE_CHATTERBOX_MODELS)
+        registry["chatterbox-turbo-nano"] = {
+            "type": "official",
+            "repo_id": "ResembleAI/chatterbox-nano",
+            "folder": "chatterbox-turbo",
+        }
+        monkeypatch.setattr(
+            "ComfyUI_Chatterbox.modules.loader.AVAILABLE_CHATTERBOX_MODELS", registry
+        )
+
+        resolved = ChatterboxLoader.resolve_pack_dir("chatterbox-turbo-nano")
+
+        assert resolved == str(models_root / "chatterbox-turbo")

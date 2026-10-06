@@ -262,23 +262,22 @@ def build_cache_key(
 def _resolve_turbo_variant(model_name: str) -> Optional[str]:
     """``"turbo"``/``"nano"`` when ``model_name`` names a Turbo-family pack.
 
-    The answer comes from the pack directory's t3 checkpoint when the pack is
-    on disk -- the folder name is arbitrary, the weights are not -- and from
-    the registry entry otherwise, so an official pack that is still
-    undownloaded routes to the right repository instead of failing the classic
-    completeness check.
+    The answer comes from the registry entry when one exists -- an official
+    Turbo-family entry, or a local one the scan registered per variant -- and
+    from the pack directory's t3 checkpoint otherwise, for community folders
+    the scan has not seen. Registry first is what makes the shared-family
+    folder work: a directory holding both t3 checkpoints cannot answer "which
+    member" from its contents, but each dropdown entry names its own.
     """
     try:
         pack_dir = ChatterboxLoader.resolve_pack_dir(model_name)
     except ValueError:
         return None
 
-    architecture = None
-    if os.path.isdir(pack_dir):
+    entry = model_info.AVAILABLE_CHATTERBOX_MODELS.get(model_name) or {}
+    architecture = entry.get("architecture")
+    if architecture not in ("chatterbox_turbo", "chatterbox_nano") and os.path.isdir(pack_dir):
         architecture = model_info.infer_pack_architecture(pack_dir)
-    if architecture is None:
-        entry = model_info.AVAILABLE_CHATTERBOX_MODELS.get(model_name) or {}
-        architecture = entry.get("architecture")
     if architecture == "chatterbox_nano":
         return "nano"
     if architecture == "chatterbox_turbo":

@@ -43,6 +43,8 @@ __all__ = [
     "read_model_config",
     "describe_model_dir",
     "infer_pack_architecture",
+    "pack_dir_entries",
+    "NANO_ENTRY_SUFFIX",
     "is_chatterbox_model_dir",
     "scan_chatterbox_models",
     "scan_custom_model_path",
@@ -99,23 +101,27 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "files": ["t3_mtl23ls_v3.safetensors", "ve.safetensors", "s3gen.safetensors", "tokenizer.json", "conds.pt"],
         "description": "23-language multilingual T3, newer checkpoint: better similarity, fewer hallucinations.",
     },
-    # The Turbo family. Turbo is the family's name upstream
+    # The Turbo family, in ONE folder. Turbo is the family's name upstream
     # (ResembleAI/chatterbox-turbo); Nano is its smaller member
-    # (ResembleAI/chatterbox-nano) and is named as one here. The registry key
-    # is the folder name a first-run download creates, so it mirrors what the
-    # author published.
+    # (ResembleAI/chatterbox-nano). The two repos share everything except the
+    # t3 checkpoint (and Nano's tokenizer layout), so both members live in the
+    # same ``chatterbox-turbo`` directory and the dropdown entry -- not the
+    # folder -- picks the weights. ``folder`` is that download target; it
+    # differs from the entry name for Nano.
     "chatterbox-turbo": {
         "repo_id": "ResembleAI/chatterbox-turbo",
+        "folder": "chatterbox-turbo",
         "architecture": "chatterbox_turbo",
         "sample_rate": 24000,
         "size_gb": 1.4,
         "files": ["t3_turbo_v1.safetensors", "ve.safetensors", "s3gen.safetensors", "s3gen_meanflow.safetensors", "tokenizer.json", "conds.pt"],
         "description": "350M English model with paralinguistic tags; lower VRAM.",
     },
-    # A quarter of Turbo again; runs on CPU at realtime. The repo is
-    # ResembleAI/chatterbox-nano; the folder names the family it belongs to.
+    # A quarter of Turbo again; runs on CPU at realtime. Shares the Turbo
+    # folder: only the t3 checkpoint is Nano's own.
     "chatterbox-turbo-nano": {
         "repo_id": "ResembleAI/chatterbox-nano",
+        "folder": "chatterbox-turbo",
         "architecture": "chatterbox_nano",
         "sample_rate": 24000,
         "size_gb": 2.9,
@@ -130,7 +136,8 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
             "conds.pt",
         ],
         "description": "Turbo-family 110M model for CPU and tight latency budgets. "
-        "Ships an HF tokenizer (vocab.json + merges.txt), not a tokenizer.json.",
+        "Downloads into the shared chatterbox-turbo folder; ships an HF tokenizer "
+        "(vocab.json + merges.txt), not a tokenizer.json.",
     },
 }
 
@@ -268,10 +275,43 @@ def infer_pack_architecture(pack_dir: str) -> Optional[str]:
     download answers ``None`` and the caller falls back to whatever else it
     knows. This is the loader-facing half of :func:`_infer_architecture`: the
     t3 filename is the pack's identity, never the folder it sits in.
+
+    A folder carrying **both** Turbo-family t3 checkpoints answers
+    ``chatterbox_nano`` here (the same nano-first rule
+    :func:`_infer_architecture` applies) -- callers that need to tell the two
+    apart must use :func:`pack_dir_entries` instead.
     """
     if not pack_dir or not os.path.isdir(pack_dir):
         return None
     return _infer_architecture(_list_entries(pack_dir))
+
+
+NANO_ENTRY_SUFFIX = "-nano"
+
+
+def pack_dir_entries(pack_dir: str) -> List[tuple]:
+    """``(entry_name, architecture)`` pairs a pack directory offers.
+
+    One directory is normally one pack named after itself. The exception is
+    the Turbo family: the two repos share every weight except the t3
+    checkpoint, so a folder holding **both** ``t3_turbo_v1.safetensors`` and
+    ``t3_nano_v1.safetensors`` serves both members and is offered twice --
+    under its own name (Turbo) and with :data:`NANO_ENTRY_SUFFIX` appended
+    (Nano). The suffix name is the user's handle for the variant; the folder
+    stays a single copy of the shared weights.
+    """
+    if not pack_dir or not os.path.isdir(pack_dir):
+        return []
+    base = os.path.basename(os.path.normpath(pack_dir))
+    entries = set(_list_entries(pack_dir))
+    has_turbo = "t3_turbo_v1.safetensors" in entries
+    has_nano = "t3_nano_v1.safetensors" in entries
+    if has_turbo and has_nano:
+        return [
+            (base, "chatterbox_turbo"),
+            (base + NANO_ENTRY_SUFFIX, "chatterbox_nano"),
+        ]
+    return [(base, _infer_architecture(sorted(entries)) or "unknown")]
 
 
 def describe_model_dir(model_dir: str) -> Dict[str, Any]:
@@ -387,14 +427,19 @@ def scan_custom_model_path(path: str) -> List[dict]:
 
 # ── Local model registry ─────────────────────────────────────────────
 
-def register_local_model(name: str, path: str) -> None:
-    """Add or replace a local pack in the registry."""
+def register_local_model(name: str, path: str, architecture: Optional[str] = None) -> None:
+    """Add or replace a local pack in the registry.
+
+    ``architecture`` overrides what the directory would infer on its own: a
+    Turbo-family folder serving both members registers twice against the same
+    path, and the t3-first sniff cannot tell those two entries apart.
+    """
     description = describe_model_dir(path)
     description["name"] = name
     AVAILABLE_CHATTERBOX_MODELS[name] = {
         "type": "local",
         "repo_id": "",
-        "architecture": description["architecture"],
+        "architecture": architecture or description["architecture"],
         "sample_rate": 24000,
         "size_gb": 0.0,
         "path": path,
@@ -417,25 +462,30 @@ def refresh_local_models() -> List[dict]:
     The filesystem walk is delegated to :mod:`modules.model_discovery`, which
     caches on the models root's ``st_mtime_ns`` -- so calling this on every
     frontend refresh is cheap. Official entries are preserved; local entries
-    for packs that have disappeared are dropped.
+    for packs that have disappeared are dropped. A Turbo-family folder serving
+    both members registers under each of the names
+    :func:`pack_dir_entries` offers.
     """
     from . import model_discovery
 
-    found = model_discovery.get_model_pack_entries()
+    found_paths = {path for _name, path in model_discovery.get_model_pack_entries()}
     current = {
         name for name, entry in AVAILABLE_CHATTERBOX_MODELS.items()
         if entry.get("type") == "local"
     }
 
-    for name in current - {name for name, _path in found}:
+    found_names: set = set()
+    for path in sorted(found_paths):
+        for entry_name, architecture in pack_dir_entries(path):
+            found_names.add(entry_name)
+            register_local_model(entry_name, path, architecture=architecture)
+
+    for name in current - found_names:
         unregister_local_model(name)
 
-    for name, path in found:
-        register_local_model(name, path)
-
     return [
-        {"name": name, "path": path, "type": "local"}
-        for name, path in found
+        {"name": name, "path": str(AVAILABLE_CHATTERBOX_MODELS[name].get("path", "")), "type": "local"}
+        for name in sorted(found_names & set(AVAILABLE_CHATTERBOX_MODELS))
     ]
 
 

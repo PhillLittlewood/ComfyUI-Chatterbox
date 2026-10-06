@@ -354,3 +354,40 @@ class TestTTSNodeCarriesTheTurboControls:
         )
         assert seen["top_k"] == 64
         assert seen["norm_loudness"] is False
+
+
+class TestSharedFamilyFolderRouting:
+    """One folder, two members: the dropdown entry picks the weights."""
+
+    @pytest.fixture()
+    def family(self, tmp_path, monkeypatch):
+        pack = tmp_path / "chatterbox-turbo"
+        pack.mkdir()
+        for name in ("t3_turbo_v1.safetensors", "t3_nano_v1.safetensors"):
+            (pack / name).write_bytes(b"\x00" * 4)
+        monkeypatch.setattr(
+            gen.ChatterboxLoader,
+            "resolve_pack_dir",
+            staticmethod(lambda name: str(pack)),
+        )
+        return pack
+
+    def test_a_nano_entry_beats_the_shared_contents(self, family, monkeypatch) -> None:
+        monkeypatch.setattr(
+            gen.model_info,
+            "AVAILABLE_CHATTERBOX_MODELS",
+            {"chatterbox-turbo-nano": {"architecture": "chatterbox_nano"}},
+        )
+        assert gen._resolve_turbo_variant("chatterbox-turbo-nano") == "nano"
+
+    def test_a_turbo_entry_beats_the_shared_contents(self, family, monkeypatch) -> None:
+        monkeypatch.setattr(
+            gen.model_info,
+            "AVAILABLE_CHATTERBOX_MODELS",
+            {"chatterbox-turbo": {"architecture": "chatterbox_turbo"}},
+        )
+        assert gen._resolve_turbo_variant("chatterbox-turbo") == "turbo"
+
+    def test_an_unregistered_shared_folder_still_answers_nano(self, family, monkeypatch) -> None:
+        monkeypatch.setattr(gen.model_info, "AVAILABLE_CHATTERBOX_MODELS", {})
+        assert gen._resolve_turbo_variant("chatterbox-turbo") == "nano"

@@ -492,7 +492,11 @@ class ChatterboxLoader:
         if entry and entry.get("type") == "local" and entry.get("path"):
             return str(entry["path"])
 
-        known = get_model_pack_path(model_name)
+        # An official entry may download into a folder other than its own
+        # name: the Turbo-family members share one directory, so the Nano
+        # entry's ``folder`` is ``chatterbox-turbo``.
+        folder = str(entry.get("folder")) if entry and entry.get("folder") else model_name
+        known = get_model_pack_path(folder)
         if known:
             return known
 

@@ -416,3 +416,71 @@ class TestModuleHygiene:
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     assert not alias.name.startswith("chatterbox"), alias.name
+
+# ---------------------------------------------------------------------------
+# The Turbo family shares one folder (2026-10-06)
+# ---------------------------------------------------------------------------
+
+
+class TestTurboFamilyFolder:
+    def test_both_members_download_into_one_folder(self) -> None:
+        assert MODEL_CONFIGS["chatterbox-turbo"]["folder"] == "chatterbox-turbo"
+        assert MODEL_CONFIGS["chatterbox-turbo-nano"]["folder"] == "chatterbox-turbo"
+        assert (
+            MODEL_CONFIGS["chatterbox-turbo-nano"]["repo_id"]
+            == "ResembleAI/chatterbox-nano"
+        )
+
+    def test_pack_dir_entries_splits_a_family_folder(self, tmp_path) -> None:
+        family = tmp_path / "chatterbox-turbo"
+        family.mkdir()
+        for name in ("t3_turbo_v1.safetensors", "t3_nano_v1.safetensors"):
+            (family / name).write_bytes(b"\x00" * 4)
+
+        assert model_info.pack_dir_entries(str(family)) == [
+            ("chatterbox-turbo", "chatterbox_turbo"),
+            ("chatterbox-turbo-nano", "chatterbox_nano"),
+        ]
+
+    def test_a_single_variant_folder_offers_itself_once(self, tmp_path) -> None:
+        pack = write_pack(tmp_path, "mine", weights=("t3_cfg.safetensors",))
+
+        assert model_info.pack_dir_entries(pack) == [("mine", "chatterbox_tts")]
+
+    def test_pack_dir_entries_answers_nothing_for_a_missing_dir(self, tmp_path) -> None:
+        assert model_info.pack_dir_entries(str(tmp_path / "nope")) == []
+
+    def test_register_accepts_an_explicit_architecture(self, tmp_path) -> None:
+        pack = write_pack(
+            tmp_path,
+            "pack",
+            weights=("t3_turbo_v1.safetensors", "t3_nano_v1.safetensors"),
+        )
+
+        register_local_model("pack-nano", pack, architecture="chatterbox_nano")
+
+        assert (
+            AVAILABLE_CHATTERBOX_MODELS["pack-nano"]["architecture"]
+            == "chatterbox_nano"
+        )
+        assert unregister_local_model("pack-nano") is True
+
+    def test_refresh_registers_both_family_members(self, tmp_path, monkeypatch) -> None:
+        family = tmp_path / "family"
+        family.mkdir()
+        for name in ("t3_turbo_v1.safetensors", "t3_nano_v1.safetensors"):
+            (family / name).write_bytes(b"\x00" * 4)
+        registry = {k: dict(v) for k, v in AVAILABLE_CHATTERBOX_MODELS.items()}
+        monkeypatch.setattr(model_info, "AVAILABLE_CHATTERBOX_MODELS", registry)
+        import ComfyUI_Chatterbox.modules.model_discovery as discovery
+
+        monkeypatch.setattr(
+            discovery, "get_model_pack_entries", lambda: [("family", str(family))]
+        )
+
+        local = refresh_local_models()
+
+        assert {entry["name"] for entry in local} == {"family", "family-nano"}
+        assert registry["family"]["architecture"] == "chatterbox_turbo"
+        assert registry["family-nano"]["architecture"] == "chatterbox_nano"
+        assert registry["family-nano"]["path"] == str(family)

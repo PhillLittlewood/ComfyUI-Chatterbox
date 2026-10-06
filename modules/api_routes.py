@@ -229,9 +229,15 @@ def _pack_files_present(model_dir: str, required_files: Any) -> bool:
 def _is_official_pack_present(
     model_name: str, config: Dict[str, Any], folder_paths_module: Any
 ) -> bool:
-    """Whether the official pack ``model_name`` is already on disk."""
+    """Whether the official pack ``model_name`` is already on disk.
+
+    The directory an entry downloads into is its ``folder``, which for the
+    Turbo-family Nano member is the shared ``chatterbox-turbo`` folder rather
+    than the entry's own name.
+    """
+    folder = str(config.get("folder") or model_name)
     for root in _tts_roots(folder_paths_module):
-        model_dir = os.path.join(root, CHATTERBOX_SUBDIR_NAME, model_name)
+        model_dir = os.path.join(root, CHATTERBOX_SUBDIR_NAME, folder)
         if _pack_files_present(model_dir, config.get("files")):
             return True
     return False

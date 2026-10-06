@@ -210,10 +210,13 @@ downloaded:
 
 - **Turbo-family packs** (`t3_turbo_v1.safetensors` / `t3_nano_v1.safetensors`)
   load through the same **Chatterbox TTS 📢** node as classic packs -- no switch
-  to set. The official packs download into `chatterbox-turbo/` and
-  `chatterbox-turbo-nano/` (Turbo is the family's name upstream; Nano is its
-  smaller member, from `ResembleAI/chatterbox-nano`). Nano's tokenizer ships as
-  `vocab.json` + `merges.txt` rather than `tokenizer.json`; both layouts load.
+  to set. The two repos (`ResembleAI/chatterbox-turbo` and its smaller member
+  `ResembleAI/chatterbox-nano`) share every weight except the t3 checkpoint, so
+  both download into the **one** `chatterbox-turbo/` folder, and the dropdown
+  offers it twice: `chatterbox-turbo` (Turbo) and `chatterbox-turbo-nano`
+  (Nano). Which weights load is decided by the entry you pick, not by the
+  folder. Nano's tokenizer ships as `vocab.json` + `merges.txt` rather than
+  `tokenizer.json`; both layouts load.
 - **Flash packs** (`t3_flash.safetensors`, `ResembleAI/chatterbox-flash`) are a
   block-diffusion model in the separate `chatterbox-flash` pip package and are
   **not supported**; selecting one fails with a message saying so.

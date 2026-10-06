@@ -120,18 +120,36 @@ def _scan(root: str) -> List[Tuple[str, str]]:
 
 
 def get_model_pack_entries() -> List[Tuple[str, str]]:
-    """``(name, path)`` for every pack, served from cache when unchanged."""
+    """``(name, path)`` for every pack, served from cache when unchanged.
+
+    A Turbo-family folder carrying both t3 checkpoints is listed twice -- once
+    under its own name, once with the nano suffix -- because the dropdown
+    entry, not the folder, picks the weights. The rule (and the suffix) live
+    in :func:`modules.model_info.pack_dir_entries`; this pass only borrows the
+    names, and skips a synthesized name that a real directory already owns.
+    """
+    from .model_info import pack_dir_entries
+
     root = get_models_root()
     key = _root_key(root)
 
-    if _cache["packs"] is not None and _cache["key"] == key:
-        return list(_cache["packs"])  # type: ignore[call-overload]
+    if _cache["packs"] is None or _cache["key"] != key:
+        _cache["packs"] = _scan(root)
+        _cache["key"] = key
+        logging.debug(
+            "[Chatterbox TTS] Scanned %d Chatterbox pack(s) under '%s'",
+            len(_cache["packs"]), root,
+        )
 
-    packs = _scan(root)
-    _cache["key"] = key
-    _cache["packs"] = packs
-    logging.debug("[Chatterbox TTS] Scanned %d Chatterbox pack(s) under '%s'", len(packs), root)
-    return list(packs)
+    packs = list(_cache["packs"])  # type: ignore[arg-type]
+    taken = {name for name, _path in packs}
+    offered: List[Tuple[str, str]] = []
+    for name, path in packs:
+        offered.append((name, path))
+        for entry_name, _architecture in pack_dir_entries(path):
+            if entry_name != name and entry_name not in taken:
+                offered.append((entry_name, path))
+    return offered
 
 
 def get_chatterbox_model_pack_names() -> List[str]:
