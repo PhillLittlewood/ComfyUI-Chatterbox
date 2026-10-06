@@ -1,85 +1,78 @@
-import os
+"""ComfyUI-Chatterbox entry point.
+
+ComfyUI imports this module for one reason: to find ``comfy_entrypoint``, the
+async factory that hands back the :class:`~comfy_api.latest.ComfyExtension`
+holding this package's nodes. That is all a V3 custom node exposes -- the V1
+``NODE_CLASS_MAPPINGS`` / ``NODE_DISPLAY_NAME_MAPPINGS`` pair is gone, and
+there is deliberately **no ``WEB_DIRECTORY``**: this package ships no frontend
+assets, and pointing ComfyUI at a missing directory only produces a warning on
+every startup.
+
+What happens here, in order, each step degrading rather than raising:
+
+1. **Pytest guard.** pytest imports every ``__init__.py`` it meets during
+   collection -- including this one -- but imports it parentless, so the
+   relative imports below would die with "attempted relative import with no
+   known parent package" before a single test runs. Under pytest the module
+   therefore exports nothing and returns.
+2. **Vendor path.** ``src/`` is appended (never inserted) to ``sys.path`` so the
+   vendored ``chatterbox`` package resolves, and a pip-installed one still
+   wins.
+3. **Folder registration.** ``tts`` and ``chatterbox`` are registered with
+   ComfyUI's ``folder_paths`` so voice packs are discoverable.
+4. **Model discovery.** The pack directory is scanned once so the dropdowns are
+   populated on the first request instead of the first click.
+5. **Routes.** The ``/chatterbox/*`` API is registered when a ``PromptServer``
+   is available. A headless or test process has none, and that is not an error.
+"""
+
 import sys
-import types
-import logging
-import folder_paths
-from importlib import metadata as importlib_metadata
 
-# Configure a logger for the entire custom node package
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.WARNING)
+if "pytest" in sys.modules:
+    # Imported parentless by pytest's collection pass; see the module docstring.
+    __all__: list[str] = []
 
-# Add a handler if none exist to avoid duplicate logs
-if not logger.hasHandlers():
-    # Use stdout for info, stderr for errors
-    handler = logging.StreamHandler(sys.stdout)
-    formatter = logging.Formatter(f"[%(name)s] %(message)s")
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-
-
-# Monkey-Patch for 'chatterbox-tts' version
-# original_importlib_version_func = importlib_metadata.version
-# def patched_version_lookup(package_name):
-#     if package_name == "chatterbox-tts":
-#         return "local-vendored"
-#     return original_importlib_version_func(package_name)
-# importlib_metadata.version = patched_version_lookup
-
-
-# easily check if the real 'perth' is being used.
-try:
-    import perth
-    # A simple check to ensure it's not our mock from a previous run
-    if not hasattr(perth, '_is_mock'):
-        logger.info("Found and using 'resemble-perth' library for watermarking.")
-except ImportError:
-    logger.warning("'resemble-perth' not found. Watermarking will be unavailable.")
-    class DummyPerthImplicitWatermarker:
-        def apply_watermark(self, wav, sample_rate):
-            logger.warning("Watermarking skipped: 'resemble-perth' is not installed.")
-            return wav
-    perth_mock = types.ModuleType('perth')
-    perth_mock.PerthImplicitWatermarker = DummyPerthImplicitWatermarker
-    # Flag to identify our mock module
-    perth_mock._is_mock = True
-    sys.modules['perth'] = perth_mock
-
-
-current_dir = os.path.dirname(os.path.abspath(__file__))
-src_dir = os.path.join(current_dir, "src")
-if src_dir not in sys.path:
-    sys.path.insert(0, src_dir)
-
-
-from .nodes import ChatterboxTTSNode, ChatterboxVCNode
-from .modules.chatterbox_handler import CHATTERBOX_MODEL_SUBDIR
-
-NODE_CLASS_MAPPINGS = {
-    "ChatterboxTTS": ChatterboxTTSNode,
-    "ChatterboxVC": ChatterboxVCNode,
-}
-
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "ChatterboxTTS": "Chatterbox TTS 📢",
-    "ChatterboxVC": "Chatterbox Voice Conversion 🗣️",
-}
-
-__all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']
-
-# Model path setup for ComfyUI
-chatterbox_models_full_path = os.path.join(folder_paths.models_dir, CHATTERBOX_MODEL_SUBDIR)
-if not os.path.exists(chatterbox_models_full_path):
-    try:
-        os.makedirs(chatterbox_models_full_path, exist_ok=True)
-    except OSError as e:
-        logger.error(f"Error creating models directory {chatterbox_models_full_path}: {e}")
-
-# Register the tts/chatterbox path with ComfyUI
-tts_chatterbox_path = os.path.join(folder_paths.models_dir, "tts")
-if "tts" not in folder_paths.folder_names_and_paths:
-    supported_exts = folder_paths.supported_pt_extensions.union({".safetensors"})
-    folder_paths.folder_names_and_paths["tts"] = ([tts_chatterbox_path], supported_exts)
 else:
-    if tts_chatterbox_path not in folder_paths.folder_names_and_paths["tts"][0]:
-        folder_paths.folder_names_and_paths["tts"][0].append(tts_chatterbox_path)
+    import logging
+    import os
+
+    import folder_paths
+
+    from .modules.api_routes import register_routes
+    from .modules.folder_registration import register_chatterbox_folders
+    from .modules.model_discovery import get_chatterbox_model_pack_names
+    from .modules.vendor_loader import ensure_vendor_on_path
+
+    logging.info("[Chatterbox TTS] Registering the Chatterbox custom node.")
+
+    # 1. The vendored `chatterbox` package lives in this repository's `src/`.
+    ensure_vendor_on_path()
+
+    # 2. Where voice packs are looked for: `models/tts/chatterbox`.
+    register_chatterbox_folders(folder_paths)
+
+    # 3. One scan now, so the pack dropdown is populated on the frontend's first
+    #    `/object_info` request instead of its first click.
+    logging.debug(
+        "[Chatterbox TTS] Found %d Chatterbox voice pack(s).",
+        len(get_chatterbox_model_pack_names()),
+    )
+
+    # 4. The `/chatterbox/*` API. Only a running server has a `PromptServer`;
+    #    a headless or partially-booted process simply gets no routes.
+    try:
+        from server import PromptServer
+
+        register_routes(
+            PromptServer.instance.routes, folder_paths, os.path.dirname(__file__)
+        )
+    except Exception as exc:
+        logging.debug(
+            "[Chatterbox TTS] The /chatterbox API routes were not registered "
+            "on this process: %s",
+            exc,
+        )
+
+    from .chatterbox_nodes import comfy_entrypoint  # noqa: E402 (after bootstrap)
+
+    __all__ = ["comfy_entrypoint"]
