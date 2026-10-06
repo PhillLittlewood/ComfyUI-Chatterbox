@@ -1,9 +1,37 @@
 [project]
 name = "ComfyUI-ChatterboxTTS"
-description = "ComfyUI Chatterbox TTS & Voice Conversion Node"
-version = "1.2.1"
+description = "Chatterbox TTS and voice conversion nodes for ComfyUI"
+version = "2.0.0"
 license = {file = "LICENSE"}
-dependencies = ["torch", "torchaudio", "librosa", "numpy", "huggingface_hub", "einops", "scipy", "tokenizers", "soundfile", "s3tokenizer", "tqdm", "conformer", "safetensors", "transformers", "diffusers"]
+requires-python = ">=3.10"
+dependencies = [
+    "s3tokenizer",
+    "conformer",
+    "omegaconf",
+]
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: GPU :: NVIDIA CUDA",
+    "Environment :: GPU :: Intel XPU",
+    "Intended Audience :: End Users/Desktop",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.optional-dependencies]
+# Audio watermarking. The vendored entry points import this defensively, so the
+# node works without it and produces un-watermarked audio.
+watermarking = ["resemble-perth"]
+# Tokenizers for the multilingual node (CJK and Korean segmentation).
+multilingual = ["pykakasi", "spacy-pkuseg"]
+# Loudness normalisation for the Turbo node.
+turbo = ["pyloudnorm"]
 
 [project.urls]
 Repository = "https://github.com/wildminder/ComfyUI-Chatterbox"
@@ -11,6 +39,6 @@ Repository = "https://github.com/wildminder/ComfyUI-Chatterbox"
 
 [tool.comfy]
 PublisherId = "wildai"
-DisplayName = "ComfyUI-ChatterboxTTS"
+DisplayName = "Chatterbox TTS"
 Icon = ""
-
+requires-comfyui = ">=0.37.0"
