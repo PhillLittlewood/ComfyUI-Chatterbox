@@ -104,7 +104,7 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "architecture": "chatterbox_turbo",
         "sample_rate": 24000,
         "size_gb": 1.4,
-        "files": ["t3_turbo_v1.safetensors", "ve.safetensors", "s3gen.safetensors", "tokenizer.json", "conds.pt"],
+        "files": ["t3_turbo_v1.safetensors", "ve.safetensors", "s3gen.safetensors", "s3gen_meanflow.safetensors", "tokenizer.json", "conds.pt"],
         "description": "350M English model with paralinguistic tags; lower VRAM.",
     },
     # A quarter of Turbo again; runs on CPU at realtime.
@@ -112,9 +112,19 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "repo_id": "ResembleAI/chatterbox-nano",
         "architecture": "chatterbox_nano",
         "sample_rate": 24000,
-        "size_gb": 0.5,
-        "files": ["t3_nano_v1.safetensors", "ve.safetensors", "s3gen.safetensors", "tokenizer.json", "conds.pt"],
-        "description": "110M English model for CPU and tight latency budgets.",
+        "size_gb": 2.9,
+        "files": [
+            "t3_nano_v1.safetensors",
+            "ve.safetensors",
+            "s3gen.safetensors",
+            "s3gen_meanflow.safetensors",
+            "vocab.json",
+            "merges.txt",
+            "tokenizer_config.json",
+            "conds.pt",
+        ],
+        "description": "110M English model for CPU and tight latency budgets. "
+        "Ships an HF tokenizer (vocab.json + merges.txt), not a tokenizer.json.",
     },
 }
 
@@ -288,11 +298,24 @@ def is_chatterbox_model_dir(path: str) -> bool:
             return False
 
     entries = set(_list_entries(path))
-    if CHATTERBOX_TOKENIZER_FILE not in entries:
+    if not _has_usable_tokenizer(entries):
         return False
     return any(weight in entries for weight in CHATTERBOX_WEIGHT_FILES) or any(
         entry.endswith(".safetensors") for entry in entries
     )
+
+
+def _has_usable_tokenizer(entries: set) -> bool:
+    """``tokenizer.json``, or the HF fast-tokenizer pair Nano ships instead.
+
+    The Nano repo has no ``tokenizer.json``: its tokenizer is the GPT2-style
+    HF layout (``vocab.json`` + ``merges.txt``), which ``AutoTokenizer`` reads
+    just as well. Demanding ``tokenizer.json`` outright made every Nano pack
+    fail the sniff before any loader could look at it.
+    """
+    if CHATTERBOX_TOKENIZER_FILE in entries:
+        return True
+    return {"vocab.json", "merges.txt"}.issubset(entries)
 
 
 def scan_chatterbox_models(scan_dir: str) -> List[dict]:

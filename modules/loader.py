@@ -79,12 +79,63 @@ MTL_CHECKPOINT_FILES: tuple[str, ...] = (
     "grapheme_mtl_merged_expanded_v1.json",
 )
 
-#: Turbo and Nano share one layout, and so share one completeness list.
+#: Turbo and Nano share one layout, and so share one completeness list. The
+#: tokenizer is checked separately: Turbo ships ``tokenizer.json``, Nano ships
+#: the HF fast layout (``vocab.json`` + ``merges.txt``) instead, and
+#: ``s3gen_meanflow.safetensors`` is here because the vendored Turbo loader
+#: builds ``S3Gen(meanflow=True)`` from it unconditionally.
 TURBO_CHECKPOINT_FILES: tuple[str, ...] = (
     "ve.safetensors",
     "s3gen.safetensors",
-    "tokenizer.json",
+    "s3gen_meanflow.safetensors",
 )
+
+# T3 checkpoint names that identify a pack's variant. A pack carries exactly
+# one T3 checkpoint, and its file name is the only variant marker Chatterbox
+# packs ship -- there is no config.json.
+_TURBO_T3_FILES = ("t3_turbo_v1.safetensors", "t3_nano_v1.safetensors")
+_FLASH_T3_FILE = "t3_flash.safetensors"
+
+
+def _refuse_wrong_variant_pack(pack_dir: str, model_name: str, entry_point: str) -> None:
+    """Raise when the pack's T3 checkpoint names a variant this loader can't run.
+
+    The pack dropdown is a directory scan, so every loader is offered every
+    pack. The error the wrong pairing produced before was a missing-file list
+    that read like a broken download, sending the user hunting for files their
+    pack was never supposed to hold. Flash is refused by every entry point:
+    it is a block-diffusion model shipped in the separate ``chatterbox-flash``
+    package, which the vendored Chatterbox cannot run.
+    """
+    try:
+        entries = set(os.listdir(pack_dir))
+    except OSError:
+        return
+
+    if _FLASH_T3_FILE in entries:
+        raise FileNotFoundError(
+            f"The pack '{model_name}' at '{pack_dir}' is Chatterbox Flash, a "
+            "block-diffusion model that ships in the separate "
+            "'chatterbox-flash' package. This node's vendored Chatterbox "
+            "(0.1.7) cannot run it -- use a classic, Turbo or Nano pack "
+            "instead."
+        )
+
+    turbo_shaped = any(name in entries for name in _TURBO_T3_FILES)
+    classic_shaped = "t3_cfg.safetensors" in entries
+    if entry_point == "classic" and turbo_shaped:
+        raise FileNotFoundError(
+            f"The pack '{model_name}' at '{pack_dir}' is a Chatterbox "
+            "Turbo/Nano pack (GPT2-style T3 weights). The classic Chatterbox "
+            "TTS node cannot run it -- use the Chatterbox Turbo node, with "
+            "the 'nano' switch on for Nano."
+        )
+    if entry_point == "turbo" and classic_shaped:
+        raise FileNotFoundError(
+            f"The pack '{model_name}' at '{pack_dir}' is a classic Chatterbox "
+            "pack (llama-style T3 weights). The Turbo node cannot run it -- "
+            "use the Chatterbox TTS node."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -593,6 +644,7 @@ class ChatterboxLoader:
                 step.
         """
         pack_dir = model_path or ChatterboxLoader.resolve_pack_dir(model_name)
+        _refuse_wrong_variant_pack(pack_dir, model_name, entry_point="classic")
 
         if not ChatterboxLoader.is_pack_complete(pack_dir):
             entry = AVAILABLE_CHATTERBOX_MODELS.get(model_name) or {}
@@ -723,6 +775,7 @@ class ChatterboxLoader:
                 names in the message.
         """
         pack_dir = model_path or ChatterboxLoader.resolve_pack_dir(model_name)
+        _refuse_wrong_variant_pack(pack_dir, model_name, entry_point="multilingual")
         required = (*MTL_CHECKPOINT_FILES, t3_model)
 
         from .constants import CHATTERBOX_REPO_ID
@@ -788,18 +841,27 @@ class ChatterboxLoader:
                 names in the message.
         """
         pack_dir = model_path or ChatterboxLoader.resolve_pack_dir(model_name)
+        _refuse_wrong_variant_pack(pack_dir, model_name, entry_point="turbo")
         variant = "t3_nano_v1.safetensors" if nano else "t3_turbo_v1.safetensors"
         repo_id = "ResembleAI/chatterbox-nano" if nano else "ResembleAI/chatterbox-turbo"
+
+        # Turbo ships one tokenizer.json; Nano ships the HF fast layout
+        # (vocab.json + merges.txt) instead. AutoTokenizer reads either, so the
+        # completeness check accepts whichever layout the pack carries -- and
+        # when neither is there yet, vocab.json is the name the refusal lists.
+        tokenizer_file = "tokenizer.json"
+        if not os.path.isfile(os.path.join(pack_dir, "tokenizer.json")):
+            tokenizer_file = "vocab.json"
 
         ChatterboxLoader._ensure_entry_point_dir(
             pack_dir,
             repo_id,
-            ("ve.safetensors", "s3gen.safetensors", variant),
+            (*TURBO_CHECKPOINT_FILES, tokenizer_file, variant),
             model_name,
             client_id,
         )
 
-        required = (*TURBO_CHECKPOINT_FILES, variant)
+        required = (*TURBO_CHECKPOINT_FILES, tokenizer_file, variant)
         missing = ChatterboxLoader._missing_checkpoint_files(pack_dir, required)
         if missing:
             raise FileNotFoundError(

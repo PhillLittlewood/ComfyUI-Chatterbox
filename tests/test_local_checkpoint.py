@@ -373,17 +373,25 @@ class TestIncompleteDirectoryIsRefused:
         assert real_vendor["mtl_tts"].REQUIRED_CHECKPOINT_FILES == MTL_CHECKPOINT_FILES
 
     def test_the_turbo_set_is_shared_by_turbo_and_nano(self, real_vendor) -> None:
-        """One module, two weight sets -- so one required list, plus a variant."""
+        """One module, two weight sets -- so one required list, plus two names.
+
+        The tokenizer is not in the constant: Turbo ships ``tokenizer.json``
+        while Nano ships ``vocab.json`` + ``merges.txt``, so the loaders pick
+        the file per pack layout (P-035). ``s3gen_meanflow.safetensors`` is,
+        because the vendored loader builds ``S3Gen(meanflow=True)`` from it
+        unconditionally.
+        """
         assert TURBO_CHECKPOINT_FILES == (
             "ve.safetensors",
             "s3gen.safetensors",
-            "tokenizer.json",
+            "s3gen_meanflow.safetensors",
         )
         assert real_vendor["tts_turbo"].REQUIRED_CHECKPOINT_FILES == TURBO_CHECKPOINT_FILES
         # The T3 checkpoint is the one name that is not fixed, so the caller adds
         # it rather than the constant claiming to know it.
         assert "t3_turbo_v1.safetensors" not in TURBO_CHECKPOINT_FILES
         assert "t3_nano_v1.safetensors" not in TURBO_CHECKPOINT_FILES
+        assert "tokenizer.json" not in TURBO_CHECKPOINT_FILES
 
     def test_the_loader_refusal_names_the_missing_files_too(self, tmp_path, monkeypatch) -> None:
         monkeypatch.setattr(
@@ -418,6 +426,81 @@ class TestIncompleteDirectoryIsRefused:
         message = str(caught.value)
         assert "Nano" in message
         assert "t3_nano_v1.safetensors" in message
+        # P-035: the dynamic tokenizer file, not the Turbo-only name.
+        assert "vocab.json" in message
+        assert "tokenizer.json" not in message
+
+    def test_a_nano_shaped_pack_passes_the_turbo_completeness_check(self, tmp_path) -> None:
+        """The real Nano repo layout: no tokenizer.json, HF tokenizer instead."""
+        pack = tmp_path / "nano"
+        pack.mkdir()
+        for name in (
+            "t3_nano_v1.safetensors",
+            "ve.safetensors",
+            "s3gen.safetensors",
+            "s3gen_meanflow.safetensors",
+            "vocab.json",
+            "merges.txt",
+        ):
+            (pack / name).write_bytes(b"\x00" * 4)
+
+        missing = ChatterboxLoader._missing_checkpoint_files(
+            str(pack),
+            (*TURBO_CHECKPOINT_FILES, "vocab.json", "t3_nano_v1.safetensors"),
+        )
+        assert missing == [], "the real Nano layout must not be called incomplete"
+        # And the generic sniff (which the classic loader gates downloads on)
+        # recognises it too, so the pack stays selectable and downloadable.
+        from modules.model_info import is_chatterbox_model_dir
+
+        assert is_chatterbox_model_dir(str(pack))
+
+    def test_the_classic_loader_refuses_a_turbo_pack_with_a_pointer(self, tmp_path) -> None:
+        """A Turbo pack in the classic node pointed at the Turbo node, by name."""
+        pack = tmp_path / "chatterbox-nano"
+        pack.mkdir()
+        for name in ("t3_nano_v1.safetensors", "ve.safetensors", "vocab.json"):
+            (pack / name).write_bytes(b"\x00" * 4)
+        with pytest.raises(FileNotFoundError) as caught:
+            ChatterboxLoader.load_model(
+                "chatterbox-nano", torch.device("cpu"), model_path=str(pack)
+            )
+        message = str(caught.value)
+        assert "Turbo" in message and "nano" in message
+        assert "t3_cfg.safetensors" not in message, (
+            "the classic missing-file list must not imply the pack is broken"
+        )
+
+    def test_a_flash_pack_is_refused_by_name_before_any_download(self, tmp_path, monkeypatch) -> None:
+        """Flash ships in a separate package; the refusal must not trigger one.
+
+        The guard runs before ``_ensure_entry_point_dir``, so selecting a Flash
+        pack can never start downloading the Turbo repo into the Flash
+        directory.
+        """
+        downloads: list[tuple] = []
+        monkeypatch.setattr(
+            ChatterboxLoader,
+            "_ensure_entry_point_dir",
+            staticmethod(lambda *a, **k: downloads.append(a)),
+        )
+        pack = tmp_path / "chatterbox-flash"
+        pack.mkdir()
+        for name in ("t3_flash.safetensors", "ve.safetensors", "s3gen.safetensors", "tokenizer.json"):
+            (pack / name).write_bytes(b"\x00" * 4)
+
+        with pytest.raises(FileNotFoundError) as caught:
+            ChatterboxLoader.load_turbo_model(
+                "chatterbox-flash", torch.device("cpu"), model_path=str(pack)
+            )
+        assert "chatterbox-flash" in str(caught.value)
+        assert "block-diffusion" in str(caught.value)
+        assert downloads == []
+        with pytest.raises(FileNotFoundError) as caught:
+            ChatterboxLoader.load_model(
+                "chatterbox-flash", torch.device("cpu"), model_path=str(pack)
+            )
+        assert "chatterbox-flash" in str(caught.value)
 
     def test_a_complete_pack_is_not_re_downloaded(self, tmp_path, monkeypatch) -> None:
         """The completeness test is per-entry-point, not the classic one.
