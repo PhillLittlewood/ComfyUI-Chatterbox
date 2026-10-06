@@ -77,7 +77,7 @@ EXPECTED_FILE_HASHES: dict[str, str] = {
     "chatterbox/mtl_tts.py": "31f882a5333d66a0f0246023835b1928b1d347ca1b3f5997676554465c23a12f",
     "chatterbox/tts.py": "d05eaa7eda086b3c72c353a230d9404621e0482c560c87599b04420a0c9fd83b",
     "chatterbox/tts_turbo.py": "823854b01060b15c157520e7b351b5fa0073202d0b1f92c979840dff195087f9",
-    "chatterbox/vc.py": "a17727be6bf82ee7e005de154aba4de1d0982f397401a7c7f9f65f75f7ea054b",
+    "chatterbox/vc.py": "8a8ac8e30e05ffc3847f04231ff034f72fd9058e600f12f199616b4dd32e2f4d",
 }
 
 #: Files added by this re-sync; a regression here means someone restored the

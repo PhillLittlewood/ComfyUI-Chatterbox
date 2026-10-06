@@ -203,7 +203,9 @@ class ChatterboxVC:
             wav, _ = self.s3gen.inference(
                 speech_tokens=s3_tokens,
                 ref_dict=self.ref_dict,
-                n_timesteps=n_timesteps,
+                # PATCHED (src/PATCHES.md P-009): upstream 0.1.7 renamed this
+                # kwarg; the node surface keeps the 0.1.2 ``n_timesteps`` name.
+                n_cfm_timesteps=n_timesteps,
                 pbar=pbar,
                 temperature=temperature,
                 flow_cfg_scale=flow_cfg_scale,

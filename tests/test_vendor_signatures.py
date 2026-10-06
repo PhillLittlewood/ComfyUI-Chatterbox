@@ -349,8 +349,21 @@ class TestComfySignatures:
 
     def test_vc_generate_threads_its_extra_kwargs(self) -> None:
         vc_source = read_source("chatterbox/vc.py")
-        s3gen_call = vc_source.split("self.s3gen.inference(", 1)[1].split(")", 1)[0]
-        for name in ("n_timesteps", "pbar", "temperature", "flow_cfg_scale"):
+        # Drop comment lines first: a comment may contain parens, and the
+        # block is delimited by the first real closing paren.
+        call_block = chr(10).join(
+            line
+            for line in vc_source.split("self.s3gen.inference(", 1)[1].splitlines()
+            if not line.strip().startswith("#")
+        )
+        s3gen_call = call_block.split(")", 1)[0]
+        # Upstream 0.1.7 renamed the kwarg; the node surface keeps the 0.1.2
+        # ``n_timesteps`` name and maps it at the call site (see P-009).
+        assert "n_cfm_timesteps=n_timesteps" in s3gen_call, (
+            "vc.py must map the node-surface n_timesteps to upstream's "
+            "n_cfm_timesteps at the S3Gen.inference call"
+        )
+        for name in ("pbar", "temperature", "flow_cfg_scale"):
             assert f"{name}={name}" in s3gen_call, (
                 f"vc.py no longer forwards {name} to S3Gen.inference"
             )
@@ -567,3 +580,32 @@ def test_heavy_deps_are_absent_unless_a_test_asked_for_them() -> None:
         "the real 'perth' distribution was imported; it is an optional "
         "dependency and the repo entry point must never fabricate a stand-in"
     )
+
+class TestVcToS3genKwargContract:
+    """The cross-file contract the mock suite could not see.
+
+    ``ChatterboxVC.generate`` exposes the 0.1.2 ``n_timesteps`` (the frozen
+    widget name) but upstream 0.1.7's ``S3Token2Wav.inference`` renamed it to
+    ``n_cfm_timesteps``. B2's patch kept the old spelling at the call site,
+    which only a real-weight run caught (TypeError). Pinned by AST here.
+    """
+
+    def test_generate_maps_n_timesteps_to_the_upstream_name(self) -> None:
+        import ast
+
+        source = open(os.path.join(VENDOR_DIR, "vc.py"), encoding="utf-8").read()
+        assert "n_cfm_timesteps=n_timesteps" in source
+        tree = ast.parse(source)
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "inference"
+        ]
+        assert calls, "no s3gen.inference call found in vc.py"
+        for call in calls:
+            keywords = {kw.arg for kw in call.keywords}
+            assert "n_timesteps" not in keywords, (
+                "vc.py passes the removed 0.1.2 kwarg 'n_timesteps' to "
+                "s3gen.inference; map it to 'n_cfm_timesteps'"
+            )
