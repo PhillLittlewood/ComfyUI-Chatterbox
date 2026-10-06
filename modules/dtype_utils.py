@@ -187,6 +187,52 @@ def get_dtype_str(dtype: torch.dtype) -> str:
     )
 
 
+def _iter_named_modules(model):
+    """``(name, module)`` pairs for an ``nn.Module`` tree *or* a plain container.
+
+    The vendored pack classes (``ChatterboxTTS``, ``ChatterboxVC``,
+    ``ChatterboxMultilingualTTS``, ``ChatterboxTurboTTS``) are plain objects
+    whose weights live in ``nn.Module`` attributes (``t3``, ``s3gen``, ``ve``).
+    ``modules.loader`` registers those submodules on the handler for ComfyUI's
+    own machinery, but the dtype walkers below are handed the *pack objects* --
+    so they must not assume ``named_modules()`` exists.
+    """
+    if isinstance(model, torch.nn.Module):
+        yield from model.named_modules()
+        return
+    seen: set = set()
+    for attr, value in list(getattr(model, "__dict__", {}).items()):
+        if not isinstance(value, torch.nn.Module):
+            continue
+        if id(value) in seen:
+            continue
+        seen.add(id(value))
+        # Delegate to the child's own walker: an nn.Module registers its
+        # children in ``_modules``, which plain ``__dict__`` iteration does
+        # not descend into.
+        for name, mod in value.named_modules():
+            yield (f"{attr}.{name}" if name else attr), mod
+
+
+def _iter_named_parameters(model):
+    """``(name, parameter)`` pairs, as tolerant as :func:`_iter_named_modules`."""
+    if isinstance(model, torch.nn.Module):
+        yield from model.named_parameters()
+        return
+    seen: set = set()
+    for attr, value in list(getattr(model, "__dict__", {}).items()):
+        if isinstance(value, torch.nn.Parameter):
+            if id(value) not in seen:
+                seen.add(id(value))
+                yield attr, value
+    for name, mod in _iter_named_modules(model):
+        for pname, param in mod.named_parameters(recurse=False):
+            if id(param) in seen:
+                continue
+            seen.add(id(param))
+            yield f"{name}.{pname}", param
+
+
 def _quant_protected_names(model) -> set:
     """Parameter names excluded from bulk dtype casts.
 
@@ -196,7 +242,7 @@ def _quant_protected_names(model) -> set:
       quantizer's own precision.
     """
     protected = set()
-    for name, mod in model.named_modules():
+    for name, mod in _iter_named_modules(model):
         if getattr(mod, "_quant_resident", False):
             prefix = f"{name}." if name else ""
             protected.add(f"{prefix}weight")
@@ -208,7 +254,7 @@ def _quant_resident_module_names(model) -> set:
     """Names of modules whose parameters hold packed quant data."""
     return {
         name
-        for name, mod in model.named_modules()
+        for name, mod in _iter_named_modules(model)
         if getattr(mod, "_quant_resident", False)
     }
 
@@ -221,7 +267,7 @@ def representative_dtype(model):
     """
     try:
         resident_modules = _quant_resident_module_names(model)
-        for name, param in model.named_parameters():
+        for name, param in _iter_named_parameters(model):
             if not param.dtype.is_floating_point:
                 continue
             owner = name.rpartition(".")[0]
@@ -236,7 +282,7 @@ def representative_dtype(model):
 def _cast_mismatched_params(model, dtype: torch.dtype) -> None:
     """Cast only floating, unprotected, mismatched parameters, then re-tie."""
     protected = _quant_protected_names(model)
-    for name, param in model.named_parameters():
+    for name, param in _iter_named_parameters(model):
         if name in protected:
             continue
         if not param.dtype.is_floating_point:
@@ -277,7 +323,7 @@ def cast_model_to_dtype_if_needed(model, dtype: torch.dtype) -> None:
     protected = _quant_protected_names(model)
 
     mismatched = []
-    for name, param in model.named_parameters():
+    for name, param in _iter_named_parameters(model):
         if name in protected or not param.dtype.is_floating_point:
             continue
         if param.dtype != dtype:

@@ -400,3 +400,81 @@ class TestNoComfyImportsAtModuleScope:
 
         assert dtype_utils._get_model_management is device_utils._get_model_management
         assert dtype_utils._get_model_management() is mm
+
+class _PlainPack:
+    """Mirrors the vendored pack shape: a *plain* class holding nn.Modules.
+
+    ``src.chatterbox.tts.ChatterboxTTS`` (and the VC/MTL/Turbo packs) are not
+    ``nn.Module`` -- their weights hang off ordinary attributes. The dtype
+    walkers are handed these objects from ``ChatterboxPatcher.patch_model``,
+    so the AttributeError regression (``'ChatterboxTTS' object has no
+    attribute 'named_modules'``) is reproduced with this shape, not with a
+    ``TinyModel``.
+    """
+
+    def __init__(self) -> None:
+        self.t3 = torch.nn.Linear(4, 4)
+        self.ve = torch.nn.Sequential(torch.nn.Linear(4, 4), torch.nn.LayerNorm(4))
+        self.conds = {"cond": torch.zeros(2)}  # plain tensor holder: not a param
+        # A lying ``dtype`` property: the pre-fix fallback path answered from
+        # this when ``named_parameters`` blew up. The walkers must find the
+        # real parameter dtype without consulting it.
+        self._declared = torch.float16
+
+    @property
+    def dtype(self):
+        return self._declared
+
+
+class TestPlainPackContainers:
+    def test_cast_reaches_a_plain_pack(self) -> None:
+        pack = _PlainPack()
+        dtype_utils.cast_model_to_dtype(pack, torch.float16)
+        assert pack.t3.weight.dtype is torch.float16
+        assert pack.ve[0].weight.dtype is torch.float16
+        assert pack.ve[1].weight.dtype is torch.float16
+
+    def test_representative_dtype_walks_instead_of_trusting_the_property(self) -> None:
+        pack = _PlainPack()
+        assert dtype_utils.representative_dtype(pack) is torch.float32
+
+    def test_named_parameters_of_a_plain_pack_are_dotted(self) -> None:
+        names = {name for name, _ in dtype_utils._iter_named_parameters(_PlainPack())}
+        assert "t3.weight" in names and "t3.bias" in names
+        assert "ve.0.weight" in names and "ve.1.weight" in names
+        assert "conds" not in names
+
+    def test_no_duplicate_params_for_shared_submodules(self) -> None:
+        shared = torch.nn.Linear(4, 4)
+        pack = _PlainPack()
+        pack.s3gen = shared
+        pack.t3 = shared  # same object under two names
+        cast_names = []
+        for name, param in dtype_utils._iter_named_parameters(pack):
+            cast_names.append(name)
+        assert len([n for n in cast_names if n.startswith(("t3.", "s3gen."))]) == 2
+
+    def test_if_needed_is_a_noop_when_already_cast(self) -> None:
+        pack = _PlainPack()
+        dtype_utils.cast_model_to_dtype(pack, torch.float16)
+        before = pack.t3.weight.data_ptr()
+        dtype_utils.cast_model_to_dtype_if_needed(pack, torch.float16)
+        assert pack.t3.weight.data_ptr() == before
+
+    def test_quant_resident_module_inside_a_plain_pack_is_protected(self) -> None:
+        pack = _PlainPack()
+        packed = QuantLinear()
+        packed._quant_resident = True
+        pack.s3gen = packed
+        protected = dtype_utils._quant_protected_names(pack)
+        assert "s3gen.weight" in protected
+        dtype_utils.cast_model_to_dtype(pack, torch.float16)
+        assert packed.weight.dtype is not torch.float16
+
+    def test_the_real_vendor_pack_passes_through_the_cast(self) -> None:
+        """The exact shape from the field: wrapper.tts_model is a plain pack."""
+        pack = _PlainPack()
+        current = dtype_utils.representative_dtype(pack)
+        dtype_utils.cast_model_to_dtype(pack, torch.float16)
+        assert current is torch.float32
+        assert pack.t3.weight.dtype is torch.float16
