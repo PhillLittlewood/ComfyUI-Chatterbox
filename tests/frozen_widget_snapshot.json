@@ -1,0 +1,372 @@
+{
+  "_about": [
+    "Frozen compatibility surface of the pre-2.0 (V1) implementation.",
+    "ComfyUI binds saved-workflow widget values BY INDEX, so the order of the",
+    "required inputs below is load-bearing: reordering them silently re-binds",
+    "every existing user graph (e.g. `use_watermark` would land on `seed`).",
+    "Captured from the repo-root `nodes.py` (classes ChatterboxTTSNode /",
+    "ChatterboxVCNode) immediately before that file was deleted in step S3.1.",
+    "Steps S6.1/S6.2 assert the rewritten V3 node schemas against this file;",
+    "they must match EXACTLY, not as a prefix."
+  ],
+  "captured": "2026-10-03",
+  "captured_from": "nodes.py (V1 API), deleted by S3.1",
+  "captured_by": "batch B4, step S3.1",
+  "comfyui_core_version": "0.37.0",
+  "widget_binding_note": [
+    "A saved graph stores one value per widget, in the order the frontend",
+    "rendered them. ComfyUI emits an EXTRA companion widget immediately after",
+    "any input carrying `control_after_generate`, so a V1 node with N required",
+    "inputs stores N+1 values when exactly one input has the flag.",
+    "workflow-examples/ChatterboxTTS-workflow.json therefore stores 13 values",
+    "for ChatterboxTTS's 12 required inputs: index 11 is `randomize` (seed's",
+    "companion widget) and index 12 is `use_watermark`.",
+    "ChatterboxVC has no `control_after_generate` input and stores 5 values",
+    "for its 6 required inputs -- its `source_audio` is a socket, not a widget."
+  ],
+  "nodes": {
+    "ChatterboxTTS": {
+      "class_name": "ChatterboxTTSNode",
+      "display_name": "Chatterbox TTS \ud83d\udce2",
+      "RETURN_TYPES": ["AUDIO"],
+      "RETURN_NAMES": ["audio"],
+      "FUNCTION": "synthesize",
+      "CATEGORY": "audio/generation",
+      "OUTPUT_NODE": true,
+      "required": [
+        {
+          "index": 0,
+          "name": "model_pack_name",
+          "type": "COMBO",
+          "default": "resembleai_default_voice",
+          "options": null,
+          "options_source": "get_chatterbox_model_pack_names()",
+          "min": null,
+          "max": null,
+          "step": null,
+          "multiline": null,
+          "control_after_generate": false,
+          "tooltip": "Select the Chatterbox voice model pack to use for generation."
+        },
+        {
+          "index": 1,
+          "name": "text",
+          "type": "STRING",
+          "default": "Hello, this is a test of Chatterbox TTS in ComfyUI.",
+          "options": null,
+          "options_source": null,
+          "min": null,
+          "max": null,
+          "step": null,
+          "multiline": true,
+          "control_after_generate": false,
+          "tooltip": "Text to be synthesized into speech."
+        },
+        {
+          "index": 2,
+          "name": "max_new_tokens",
+          "type": "INT",
+          "default": 1000,
+          "options": null,
+          "options_source": null,
+          "min": 16,
+          "max": 4000,
+          "step": 8,
+          "multiline": null,
+          "control_after_generate": false,
+          "tooltip": "Maximum number of audio tokens to generate. 25 tokens \u2248 1 second. The hard limit is 4096 tokens (\u2248 163 seconds)."
+        },
+        {
+          "index": 3,
+          "name": "flow_cfg_scale",
+          "type": "FLOAT",
+          "default": 0.7,
+          "options": null,
+          "options_source": null,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.05,
+          "multiline": null,
+          "control_after_generate": false,
+          "tooltip": "CFG scale for the mel spectrogram decoder (flow matching). Higher values increase adherence to content and timbre but may reduce naturalness."
+        },
+        {
+          "index": 4,
+          "name": "exaggeration",
+          "type": "FLOAT",
+          "default": 0.5,
+          "options": null,
+          "options_source": null,
+          "min": 0.25,
+          "max": 2.0,
+          "step": 0.05,
+          "multiline": null,
+          "control_after_generate": false,
+          "tooltip": "Controls the expressiveness and emotional intensity. Higher values lead to more exaggerated prosody."
+        },
+        {
+          "index": 5,
+          "name": "temperature",
+          "type": "FLOAT",
+          "default": 0.8,
+          "options": null,
+          "options_source": null,
+          "min": 0.05,
+          "max": 5.0,
+          "step": 0.05,
+          "multiline": null,
+          "control_after_generate": false,
+          "tooltip": "Controls the randomness of the sampling process. Higher values produce more diverse speech, while lower values are more deterministic."
+        },
+        {
+          "index": 6,
+          "name": "cfg_weight",
+          "type": "FLOAT",
+          "default": 0.5,
+          "options": null,
+          "options_source": null,
+          "min": 0.2,
+          "max": 1.0,
+          "step": 0.05,
+          "multiline": null,
+          "control_after_generate": false,
+          "tooltip": "Classifier-Free Guidance (CFG) weight. Controls how strongly the model adheres to the text prompt. Higher values may reduce naturalness."
+        },
+        {
+          "index": 7,
+          "name": "repetition_penalty",
+          "type": "FLOAT",
+          "default": 1.2,
+          "options": null,
+          "options_source": null,
+          "min": 1.0,
+          "max": 2.0,
+          "step": 0.1,
+          "multiline": null,
+          "control_after_generate": false,
+          "tooltip": "Penalizes repeated tokens to discourage monotonous or repetitive speech. A value of 1.0 means no penalty."
+        },
+        {
+          "index": 8,
+          "name": "min_p",
+          "type": "FLOAT",
+          "default": 0.05,
+          "options": null,
+          "options_source": null,
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.01,
+          "multiline": null,
+          "control_after_generate": false,
+          "tooltip": "Sets a minimum probability threshold for nucleus sampling (Min-P). Filters out tokens with very low probability."
+        },
+        {
+          "index": 9,
+          "name": "top_p",
+          "type": "FLOAT",
+          "default": 1.0,
+          "options": null,
+          "options_source": null,
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.01,
+          "multiline": null,
+          "control_after_generate": false,
+          "tooltip": "Nucleus sampling (Top-P) parameter. The model samples from the smallest set of tokens whose cumulative probability exceeds this value."
+        },
+        {
+          "index": 10,
+          "name": "seed",
+          "type": "INT",
+          "default": 0,
+          "options": null,
+          "options_source": null,
+          "min": 0,
+          "max": 18446744073709551615,
+          "step": null,
+          "multiline": null,
+          "control_after_generate": true,
+          "tooltip": "Seed for random number generation. A value of 0 will use a random seed."
+        },
+        {
+          "index": 11,
+          "name": "use_watermark",
+          "type": "BOOLEAN",
+          "default": false,
+          "options": null,
+          "options_source": null,
+          "min": null,
+          "max": null,
+          "step": null,
+          "multiline": null,
+          "control_after_generate": false,
+          "tooltip": "Enable or disable the audio watermark. Requires 'resemble-perth' to be installed."
+        }
+      ],
+      "optional": [
+        {
+          "index": 0,
+          "name": "audio_prompt",
+          "type": "AUDIO",
+          "default": null,
+          "options": null,
+          "options_source": null,
+          "min": null,
+          "max": null,
+          "step": null,
+          "multiline": null,
+          "control_after_generate": false,
+          "tooltip": null
+        }
+      ]
+    },
+    "ChatterboxVC": {
+      "class_name": "ChatterboxVCNode",
+      "display_name": "Chatterbox Voice Conversion \ud83d\udde3\ufe0f",
+      "RETURN_TYPES": ["AUDIO"],
+      "RETURN_NAMES": ["converted_audio"],
+      "FUNCTION": "convert_voice",
+      "CATEGORY": "audio/generation",
+      "OUTPUT_NODE": true,
+      "required": [
+        {
+          "index": 0,
+          "name": "model_pack_name",
+          "type": "COMBO",
+          "default": "resembleai_default_voice",
+          "options": null,
+          "options_source": "get_chatterbox_model_pack_names()",
+          "min": null,
+          "max": null,
+          "step": null,
+          "multiline": null,
+          "control_after_generate": false,
+          "tooltip": "Select the Chatterbox voice model pack to use for conversion."
+        },
+        {
+          "index": 1,
+          "name": "source_audio",
+          "type": "AUDIO",
+          "default": null,
+          "options": null,
+          "options_source": null,
+          "min": null,
+          "max": null,
+          "step": null,
+          "multiline": null,
+          "control_after_generate": false,
+          "tooltip": "The audio containing the speech content to be converted."
+        },
+        {
+          "index": 2,
+          "name": "n_timesteps",
+          "type": "INT",
+          "default": 10,
+          "options": null,
+          "options_source": null,
+          "min": 2,
+          "max": 50,
+          "step": 1,
+          "multiline": null,
+          "control_after_generate": false,
+          "tooltip": "Number of diffusion steps for the flow matching process. Higher values may improve quality at the cost of speed."
+        },
+        {
+          "index": 3,
+          "name": "temperature",
+          "type": "FLOAT",
+          "default": 1.0,
+          "options": null,
+          "options_source": null,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.05,
+          "multiline": null,
+          "control_after_generate": false,
+          "tooltip": "Controls the randomness of the initial noise. 1.0 is standard. Lower values are more deterministic."
+        },
+        {
+          "index": 4,
+          "name": "flow_cfg_scale",
+          "type": "FLOAT",
+          "default": 0.7,
+          "options": null,
+          "options_source": null,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.05,
+          "multiline": null,
+          "control_after_generate": false,
+          "tooltip": "CFG scale for the mel spectrogram decoder. Higher values increase adherence to the target voice but may reduce naturalness."
+        },
+        {
+          "index": 5,
+          "name": "use_watermark",
+          "type": "BOOLEAN",
+          "default": false,
+          "options": null,
+          "options_source": null,
+          "min": null,
+          "max": null,
+          "step": null,
+          "multiline": null,
+          "control_after_generate": false,
+          "tooltip": "Enable or disable the audio watermark. Requires 'resemble-perth' to be installed."
+        }
+      ],
+      "optional": [
+        {
+          "index": 0,
+          "name": "target_voice_audio",
+          "type": "AUDIO",
+          "default": null,
+          "options": null,
+          "options_source": null,
+          "min": null,
+          "max": null,
+          "step": null,
+          "multiline": null,
+          "control_after_generate": false,
+          "tooltip": "The audio file containing the target voice timbre. If not provided, the default voice from the model pack will be used."
+        }
+      ]
+    }
+  },
+  "constants": {
+    "_about": [
+      "Constants carried forward verbatim from modules/chatterbox_handler.py,",
+      "deleted by S3.2. A later batch recreates modules/constants.py with the",
+      "same names and values; tests assert the two agree."
+    ],
+    "CHATTERBOX_MODEL_SUBDIR": {
+      "value": "tts/chatterbox",
+      "expression": "os.path.join(\"tts\", \"chatterbox\")",
+      "parts": ["tts", "chatterbox"],
+      "note": "Platform-dependent: os.path.join renders it with os.sep, so compare against os.path.join(*parts)."
+    },
+    "CHATTERBOX_REPO_ID": {
+      "value": "ResembleAI/chatterbox",
+      "parts": ["ResembleAI/chatterbox"]
+    },
+    "CHATTERBOX_FILES_TO_DOWNLOAD": {
+      "value": [
+        "ve.safetensors",
+        "t3_cfg.safetensors",
+        "s3gen.safetensors",
+        "tokenizer.json",
+        "conds.pt"
+      ],
+      "parts": [
+        "ve.safetensors",
+        "t3_cfg.safetensors",
+        "s3gen.safetensors",
+        "tokenizer.json",
+        "conds.pt"
+      ]
+    },
+    "DEFAULT_MODEL_PACK_NAME": {
+      "value": "resembleai_default_voice",
+      "parts": ["resembleai_default_voice"]
+    }
+  }
+}
