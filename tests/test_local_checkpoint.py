@@ -567,7 +567,7 @@ class TestIncompleteDirectoryIsRefused:
         """A dead ``chatterbox_flash`` import blames the checkout, not pip.
 
         The package is vendored, so the message must point at
-        ``src/chatterbox-flash`` and forbid a pip install (whose dependency
+        ``src/chatterbox_flash`` and forbid a pip install (whose dependency
         block would shadow the vendored Chatterbox) rather than name one.
         """
         monkeypatch.setattr(
@@ -593,7 +593,7 @@ class TestIncompleteDirectoryIsRefused:
             else:
                 del _sys.modules["chatterbox_flash"]
         message = str(caught.value)
-        assert "src/chatterbox-flash" in message
+        assert "src/chatterbox_flash" in message
         assert "pip-install" in message and "no-deps" not in message
 
     def test_an_incomplete_flash_pack_lists_its_own_files(

@@ -908,7 +908,7 @@ class ChatterboxLoader:
         Flash is block-diffusion T3 (a Fast-dLLM-style masked decoder) shipped
         in the ``chatterbox-flash`` package -- the vendored Chatterbox 0.1.7
         has no such decoder. That package is vendored by this node at
-        ``src/chatterbox-flash/`` (never pip-installed): its dependency block
+        ``src/chatterbox_flash/`` (never pip-installed): its dependency block
         would pull a pip copy of ``chatterbox-tts`` that shadows the vendored
         (patched) tree, while the code itself imports ``S3Gen`` /
         ``VoiceEncoder`` / ``T3Cond`` from ``chatterbox`` -- i.e. from this
@@ -958,7 +958,7 @@ class ChatterboxLoader:
         except ImportError as exc:
             raise FileNotFoundError(
                 f"The Flash pack '{model_name}' needs this node's vendored "
-                "'chatterbox-flash' package (src/chatterbox-flash), which "
+                "'chatterbox-flash' package (src/chatterbox_flash), which "
                 "failed to import. The node checkout may be incomplete or "
                 "damaged -- re-install or update the node. Do NOT pip-install "
                 "'chatterbox-flash': its dependency block would pull a pip "

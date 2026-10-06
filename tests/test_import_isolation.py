@@ -31,8 +31,6 @@ from conftest import ROOT_DIR
 
 SRC_DIR = os.path.join(ROOT_DIR, "src")
 
-FLASH_DIR = os.path.join(SRC_DIR, "chatterbox-flash")
-
 
 def read_repo_init() -> str:
     with open(os.path.join(ROOT_DIR, "__init__.py"), "r", encoding="utf-8") as handle:
@@ -109,8 +107,6 @@ PROBE = textwrap.dedent(
         'prefix_changed': after[: len(before)] != before,
         'src_count': after.count({src_dir!r}),
         'src_index': after.index({src_dir!r}) if {src_dir!r} in after else None,
-        'flash_count': after.count({flash_dir!r}),
-        'flash_index': after.index({flash_dir!r}) if {flash_dir!r} in after else None,
         'sys_path_len': len(after),
         'path_len_before': len(before),
         'perth_in_modules': 'perth' in sys.modules,
@@ -132,7 +128,6 @@ def run_probe() -> dict:
                 init_path=os.path.join(ROOT_DIR, "__init__.py"),
                 root=ROOT_DIR,
                 src_dir=SRC_DIR,
-                flash_dir=FLASH_DIR,
             ),
         ],
         cwd=ROOT_DIR,
@@ -157,20 +152,12 @@ def probe() -> dict:
 
 
 class TestCleanInterpreterImport:
-    def test_sys_path_gains_only_the_vendored_roots(self, probe: dict) -> None:
-        unexpected = [
-            entry for entry in probe["added"] if entry not in (SRC_DIR, FLASH_DIR)
-        ]
-        assert not unexpected, (
-            f"importing the node package added {unexpected!r} to sys.path; "
-            f"only the vendored roots may be appended"
-        )
-        assert len(probe["added"]) == 2, (
-            f"importing the node package added {probe['added']!r}: both the "
-            f"vendored chatterbox tree and the Flash sampler must load"
+    def test_sys_path_gains_at_most_one_entry(self, probe: dict) -> None:
+        assert len(probe["added"]) <= 1, (
+            f"importing the node package added {probe['added']!r} to sys.path"
         )
 
-    def test_the_entries_are_the_tail(self, probe: dict) -> None:
+    def test_the_entry_is_the_tail(self, probe: dict) -> None:
         if SRC_DIR not in probe["added"]:
             pytest.skip(
                 f"src/ was already on sys.path in the probe interpreter "
@@ -179,16 +166,11 @@ class TestCleanInterpreterImport:
         assert probe["prefix_changed"] is False, (
             "an existing sys.path entry was reordered by the node package"
         )
-        assert probe["flash_index"] == probe["sys_path_len"] - 1, (
-            f"the Flash root was added at index {probe['flash_index']} of "
-            f"{probe['sys_path_len']}; the vendored roots must be the tail"
-        )
-        assert probe["src_index"] == probe["sys_path_len"] - 2, (
+        assert probe["src_index"] == probe["sys_path_len"] - 1, (
             f"src/ was added at index {probe['src_index']} of "
-            f"{probe['sys_path_len']}; the vendored roots must be the tail"
+            f"{probe['sys_path_len']}; it must be the tail"
         )
         assert probe["src_count"] == 1
-        assert probe["flash_count"] == 1
 
     def test_perth_is_not_injected(self, probe: dict) -> None:
         assert probe["perth_in_modules"] is False, (

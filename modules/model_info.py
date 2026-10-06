@@ -141,7 +141,7 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
     },
     # Block-diffusion member (Fast-dLLM-style masked decoder over the same
     # S3Gen / voice-encoder stack). Not runnable by the vendored 0.1.7 code:
-    # the sampler is vendored at src/chatterbox-flash/ and imports S3Gen /
+    # the sampler is vendored at src/chatterbox_flash/ and imports S3Gen /
     # VoiceEncoder / T3Cond from the vendored tree. No conds.pt ships in the
     # repo, so a reference clip is required.
     "chatterbox-flash": {

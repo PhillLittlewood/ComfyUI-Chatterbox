@@ -219,7 +219,7 @@ downloaded:
   `tokenizer.json`; both layouts load.
 - **Flash packs** (`t3_flash.safetensors`, `ResembleAI/chatterbox-flash`) are a
   block-diffusion model whose sampler ships **vendored with this node** at
-  `src/chatterbox-flash/` — nothing to install, it works out of the box.
+  `src/chatterbox_flash/` — nothing to install, it works out of the box.
   Flash loads through the same **Chatterbox TTS 📢** node and has no built-in
   voice — connect a reference audio clip to the node's audio prompt input.
   `exaggeration` and `temperature` apply; the classic sampler's knobs
@@ -321,7 +321,7 @@ The watermarking import is defensive *inside the vendored code itself*, which is
 why the node never crashes on a machine without `resemble-perth`.
 
 There is deliberately **no `[flash]` extra** because none is needed: the Flash
-sampler is vendored at `src/chatterbox-flash/` and imports with the node. If
+sampler is vendored at `src/chatterbox_flash/` and imports with the node. If
 you ever installed `chatterbox-flash` by hand, remove it — a pip copy (and the
 `chatterbox` package its dependency block drags in) would shadow this node's
 vendored, patched sources:
