@@ -205,6 +205,16 @@ registers its `chatterbox` folder under *every* `tts` root ComfyUI resolves, so 
 pack installed under a secondary root from `extra_model_paths.yaml` is visible
 too.
 
+Pack/model pairing is validated at load time, before anything is downloaded:
+
+- **Turbo / Nano packs** (`t3_turbo_v1.safetensors` / `t3_nano_v1.safetensors`)
+  load through the **Chatterbox Turbo TTS ⚡** node (use the Nano switch for
+  `chatterbox-nano`; its tokenizer ships as `vocab.json` + `merges.txt`).
+- **Flash packs** (`t3_flash.safetensors`, `ResembleAI/chatterbox-flash`) are a
+  block-diffusion model in the separate `chatterbox-flash` pip package and are
+  **not supported** by this node; selecting one fails with a message saying so.
+- Classic packs (`t3_cfg.safetensors`) stay on the classic TTS / VC nodes.
+
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 <!-- BEHAVIOUR -->
