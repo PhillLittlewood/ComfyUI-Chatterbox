@@ -198,7 +198,9 @@ class TestRefDictIsCast:
         return probe.flow.captured
 
     @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
-    def test_every_ref_tensor_is_cast_to_the_model_dtype(self, vendor, dtype) -> None:
+    def test_the_floating_ref_tensors_are_cast_to_the_model_dtype(
+        self, vendor, dtype
+    ) -> None:
         captured = self._forward(
             vendor,
             dtype,
@@ -215,29 +217,32 @@ class TestRefDictIsCast:
         )
         assert captured["embedding"].dtype is dtype
 
-    def test_the_integer_tensors_are_cast_too_and_that_is_an_upstream_quirk(
+    def test_the_integer_tensors_follow_the_device_but_never_the_dtype(
         self, vendor
     ) -> None:
-        """Recorded, not endorsed.
+        """P-034: the recorded upstream quirk turned out to be a live bug.
 
-        ``S3Token2Mel.forward`` casts every tensor in ``ref_dict`` to
-        ``self.dtype`` with no floating-point guard, so token *ids* come out as
-        fp16/bf16 as well. The solver's own ``cast_all`` does have the guard
-        (``a.dtype.is_floating_point``), so the two paths disagree. It has been
-        like that upstream and this batch does not patch it -- half-precision
-        token ids are harmless for the length bookkeeping they feed -- but it is
-        pinned here so a future fix is a deliberate change rather than a surprise.
+        The old blanket ``.to(dtype=self.dtype)`` also hit ``prompt_token`` /
+        ``prompt_token_len``. In fp32 that is an exact no-op, but bf16's 7-bit
+        mantissa cannot represent every integer: a combined token length of
+        635 rounds to 632, which truncated the flow's padding mask and crashed
+        ``flow.inference`` with a shape mismatch (found by a real-weight bf16
+        run) -- and token ids above 256 were silently corrupted before that.
+        The solver's own ``cast_all`` always had the floating-point guard; the
+        two paths now agree.
         """
         captured = self._forward(
             vendor,
             torch.bfloat16,
             {
-                "prompt_token": torch.zeros((1, 4), dtype=torch.long),
-                "prompt_token_len": torch.tensor([4], dtype=torch.long),
+                "prompt_token": torch.tensor([[7, 300]], dtype=torch.long),
+                "prompt_token_len": torch.tensor([635], dtype=torch.long),
             },
         )
-        assert captured["prompt_token"].dtype is torch.bfloat16
-        assert captured["prompt_token_len"].dtype is torch.bfloat16
+        assert captured["prompt_token"].dtype is torch.long
+        assert captured["prompt_token_len"].dtype is torch.long
+        assert int(captured["prompt_token_len"][0]) == 635
+        assert captured["prompt_token"].tolist() == [[7, 300]]
 
     def test_numpy_arrays_become_tensors_and_are_then_cast(self, vendor) -> None:
         import numpy as np

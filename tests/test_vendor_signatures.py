@@ -609,3 +609,97 @@ class TestVcToS3genKwargContract:
                 "vc.py passes the removed 0.1.2 kwarg 'n_timesteps' to "
                 "s3gen.inference; map it to 'n_cfm_timesteps'"
             )
+
+
+class TestHalfDtypeContracts:
+    """The bf16/fp16 contracts P-031/P-032 pin against a re-sync.
+
+    A half-dtype cast must never reach the fp32-only frontends, and the fp32
+    tensors they produce must be aligned with the half weights that consume
+    them. The first half was found only by a real-weight bf16 run
+    (``RuntimeError: Unsupported dtype BFloat16`` in ``Kaldi.fbank``); the
+    second would have been the next field failure (a Linear dtype mismatch in
+    ``T3CondEnc``). Pinned by AST here so a re-sync cannot quietly revert them.
+    """
+
+    @staticmethod
+    def _function_source(rel_path: str, func_name: str) -> str:
+        source = open(os.path.join(VENDOR_DIR, rel_path), encoding="utf-8").read()
+        tree = ast.parse(source)
+        segments = [
+            ast.get_source_segment(source, node)
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == func_name
+        ]
+        segments = [segment for segment in segments if segment]
+        assert len(segments) == 1, (
+            f"{func_name!r} in {rel_path}: expected exactly one definition, "
+            f"found {len(segments)}"
+        )
+        return segments[0]
+
+    @staticmethod
+    def _class_method_source(rel_path: str, class_name: str, func_name: str) -> str:
+        """Source of one method of one class, when the module has several
+        definitions of the same method name (``forward`` twice in s3gen.py)."""
+        source = open(os.path.join(VENDOR_DIR, rel_path), encoding="utf-8").read()
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name == class_name:
+                for child in node.body:
+                    if (
+                        isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and child.name == func_name
+                    ):
+                        segment = ast.get_source_segment(source, child)
+                        assert segment is not None
+                        return segment
+        raise AssertionError(f"{class_name}.{func_name} not found in {rel_path}")
+
+    def test_embed_ref_feeds_the_speaker_encoder_float32(self) -> None:
+        block = self._function_source("models/s3gen/s3gen.py", "embed_ref")
+        assert "self.speaker_encoder.inference(ref_wav_16.float())" in block, (
+            "P-031: the 16 kHz clip must reach CAMPPlus uncast -- Kaldi.fbank's "
+            "FFT has no half-dtype kernel"
+        )
+        assert "ref_wav_16.to(dtype=self.dtype)" not in block
+
+    def test_embed_ref_casts_the_x_vector_to_the_flow_dtype(self) -> None:
+        block = self._function_source("models/s3gen/s3gen.py", "embed_ref")
+        assert "embedding=ref_x_vector.to(dtype=self.dtype)" in block, (
+            "P-031: the fp32 x-vector must match the flow/hift weights' dtype "
+            "before conditioning consumes it"
+        )
+
+    def test_inference_hands_the_vocoder_float32(self) -> None:
+        block = self._function_source("models/s3gen/s3gen.py", "inference")
+        assert "output_mels = output_mels.float()" in block, (
+            "P-033: the HiFT vocoder is float32-only; the mel must reach it "
+            "uncast instead of being re-cast to self.dtype"
+        )
+        assert "output_mels.to(dtype=self.dtype)" not in block
+
+    def test_ref_dict_casting_skips_integer_tensors(self) -> None:
+        block = self._class_method_source(
+            "models/s3gen/s3gen.py", "S3Token2Mel", "forward"
+        )
+        assert "if ref_dict[rk].is_floating_point():" in block, (
+            "P-034: token ids and lengths in the ref dict are integers -- they "
+            "follow the device, never the dtype (bf16 rounds 635 to 632 and "
+            "cannot represent every token id)"
+        )
+
+    def test_t3_cond_enc_aligns_fp32_conditioning_to_the_projectors(self) -> None:
+        block = self._function_source("models/t3/modules/cond_enc.py", "forward")
+        assert (
+            "cond.speaker_emb.view(-1, self.hp.speaker_embed_size).to(proj_dtype)"
+            in block
+        ), "P-032: the fp32 speaker embedding must be aligned with spkr_enc"
+        assert "self.perceiver(cond_prompt_speech_emb.to(proj_dtype))" in block, (
+            "P-032: the cond-prompt embedding must be aligned with the perceiver"
+        )
+        assert (
+            "cond.emotion_adv.view(-1, 1, 1).to(self.emotion_adv_fc.weight.dtype)"
+            in block
+        ), "P-032: the fp32 emotion scalar must be aligned with emotion_adv_fc"

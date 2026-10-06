@@ -149,7 +149,12 @@ class S3Token2Mel(torch.nn.Module):
             ref_wav_16 = get_resampler(ref_sr, S3_SR, device)(ref_wav)
 
         # Speaker embedding
-        ref_x_vector = self.speaker_encoder.inference(ref_wav_16.to(dtype=self.dtype))
+        # PATCHED (src/PATCHES.md P-031): CAMPPlus is float32-only -- its
+        # inference() hard-casts the fbank features to float32 and Kaldi.fbank's
+        # FFT has no half-dtype kernel ("Unsupported dtype BFloat16"). The clip
+        # is passed through uncast; the x-vector is cast to the flow's dtype
+        # below, where conditioning consumes it.
+        ref_x_vector = self.speaker_encoder.inference(ref_wav_16.float())
 
         # Tokenize 16khz reference
         ref_speech_tokens, ref_speech_token_lens = self.tokenizer(ref_wav_16.float())
@@ -167,7 +172,9 @@ class S3Token2Mel(torch.nn.Module):
             prompt_token_len=ref_speech_token_lens,
             prompt_feat=ref_mels_24,
             prompt_feat_len=ref_mels_24_len,
-            embedding=ref_x_vector,
+            # PATCHED (src/PATCHES.md P-031): the fp32 x-vector must match the
+            # flow/hift weights' dtype before it enters conditioning.
+            embedding=ref_x_vector.to(dtype=self.dtype),
         )
 
     def forward(
@@ -210,11 +217,22 @@ class S3Token2Mel(torch.nn.Module):
             ref_dict = self.embed_ref(ref_wav, ref_sr)
         else:
             # type/device casting (all values will be numpy if it's from a prod API call)
+            # PATCHED (src/PATCHES.md P-034): only floating tensors take the
+            # dtype cast. ``prompt_token`` / ``prompt_token_len`` are token ids
+            # and lengths -- integers that may move between devices but never
+            # between dtypes: bf16 cannot represent every id/length (635 rounds
+            # to 632), which truncated the flow's padding mask and crashed
+            # generation, and quietly corrupted token ids above 256 before
+            # that. In fp32 the cast was an exact no-op, so upstream never
+            # noticed.
             for rk in list(ref_dict):
                 if isinstance(ref_dict[rk], np.ndarray):
                     ref_dict[rk] = torch.from_numpy(ref_dict[rk])
                 if torch.is_tensor(ref_dict[rk]):
-                    ref_dict[rk] = ref_dict[rk].to(device=self.device, dtype=self.dtype)
+                    if ref_dict[rk].is_floating_point():
+                        ref_dict[rk] = ref_dict[rk].to(device=self.device, dtype=self.dtype)
+                    else:
+                        ref_dict[rk] = ref_dict[rk].to(device=self.device)
 
         speech_tokens = torch.atleast_2d(speech_tokens)
 
@@ -343,7 +361,13 @@ class S3Token2Wav(S3Token2Mel):
     @torch.inference_mode()
     def hift_inference(self, speech_feat, cache_source: torch.Tensor = None):
         if cache_source is None:
-            cache_source = torch.zeros(1, 1, 0).to(device=self.device, dtype=self.dtype)
+            # PATCHED (src/PATCHES.md P-033): the cache is concatenated with the
+            # vocoder's internal source tensor, so it follows the vocoder's own
+            # weight dtype (float32 -- the vocoder is fp32-resident), not the
+            # flow's.
+            cache_source = torch.zeros(1, 1, 0).to(
+                device=self.device, dtype=next(self.mel2wav.parameters()).dtype
+            )
         return self.mel2wav.inference(speech_feat=speech_feat, cache_source=cache_source)
 
     @torch.inference_mode()
@@ -380,7 +404,14 @@ class S3Token2Wav(S3Token2Mel):
             # PATCHED (src/PATCHES.md P-018)
             pbar=pbar, temperature=temperature, flow_cfg_scale=flow_cfg_scale,
         )
-        output_mels = output_mels.to(dtype=self.dtype) # FIXME (fp16 mode) is this still needed?
+        # PATCHED (src/PATCHES.md P-033): the HiFT vocoder is float32-only --
+        # SineGen's harmonic math promotes to fp32 (torch.arange defaults) and
+        # torch.istft consumes the fp32 window buffer, so half weights crash at
+        # the first Linear ("expected mat1 and mat2 to have the same dtype").
+        # The mel stays fp32 for the vocoder (as S3Token2Wav.forward already
+        # hands it over); the vocoder itself is kept fp32-resident by
+        # modules/dtype_utils.py. (Supersedes the FIXME above.)
+        output_mels = output_mels.float()
         output_wavs, output_sources = self.hift_inference(output_mels, None)
 
         # NOTE: ad-hoc method to reduce "spillover" from the reference clip.

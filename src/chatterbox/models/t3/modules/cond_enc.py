@@ -67,7 +67,14 @@ class T3CondEnc(nn.Module):
             "no embeddings for cond_prompt_speech_tokens"
 
         # Speaker embedding projection
-        cond_spkr = self.spkr_enc(cond.speaker_emb.view(-1, self.hp.speaker_embed_size))[:, None]  # (B, 1, dim)
+        # PATCHED (src/PATCHES.md P-032): the conditioning tensors come from
+        # float32-only frontends (the voice encoder, the emotion scalar), while
+        # t3's weights may be cast to a half dtype; each input is aligned with
+        # the dtype of the weights that consume it.
+        proj_dtype = self.spkr_enc.weight.dtype
+        cond_spkr = self.spkr_enc(
+            cond.speaker_emb.view(-1, self.hp.speaker_embed_size).to(proj_dtype)
+        )[:, None]  # (B, 1, dim)
         empty = torch.zeros_like(cond_spkr[:, :0])  # (B, 0, dim)
 
         # TODO CLAP
@@ -79,13 +86,15 @@ class T3CondEnc(nn.Module):
         if cond_prompt_speech_emb is None:
             cond_prompt_speech_emb = empty  # (B, 0, dim)
         elif self.hp.use_perceiver_resampler:
-            cond_prompt_speech_emb = self.perceiver(cond_prompt_speech_emb)
+            cond_prompt_speech_emb = self.perceiver(cond_prompt_speech_emb.to(proj_dtype))
 
         # Emotion Adv: must provide a value if this model uses emotion conditioning
         cond_emotion_adv = empty  # (B, 0, dim)
         if self.hp.emotion_adv:
             assert cond.emotion_adv is not None
-            cond_emotion_adv = self.emotion_adv_fc(cond.emotion_adv.view(-1, 1, 1))
+            cond_emotion_adv = self.emotion_adv_fc(
+                cond.emotion_adv.view(-1, 1, 1).to(self.emotion_adv_fc.weight.dtype)
+            )
 
         # Concat and return
         cond_embeds = torch.cat((
