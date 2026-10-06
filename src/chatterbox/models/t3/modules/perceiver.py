@@ -8,12 +8,17 @@ from torch import nn
 import torch.nn.functional as F
 from einops import rearrange
 
-try:
+# PATCHED (src/PATCHES.md P-010): `torch.backends.cuda.sdp_kernel` was deprecated
+# in torch 2.2 and removed in later releases. Probe for the replacement once, at
+# import time, and keep the old call for torch < 2.2 so the vendored tree still
+# imports on an older ComfyUI runtime.
+try:  # torch >= 2.2
     from torch.nn.attention import SDPBackend, sdpa_kernel
-    # Flag to indicate that the modern SDPA API is available.
+
     SUPPORTS_SDPA_KERNEL = True
-except (ImportError, AttributeError):
-    # Fallback for older PyTorch versions.
+except ImportError:  # pragma: no cover - only on torch < 2.2
+    SDPBackend = None
+    sdpa_kernel = None
     SUPPORTS_SDPA_KERNEL = False
 
 
@@ -98,33 +103,31 @@ class AttentionQKV(nn.Module):
         return torch.einsum("bhts,bhls->bhlt", attn, v)
 
     def flash_attention(self, q, k, v, mask=None):
+        # PATCHED (src/PATCHES.md P-010)
         if SUPPORTS_SDPA_KERNEL:
-            # Modern PyTorch (>= 2.2) API for enabling specific backends.
-            # This replaces the deprecated `torch.backends.cuda.sdp_kernel`.
+            config = self.flash_config or {}
             backends = []
-            if self.flash_config.get('enable_flash', True):
+            if config.get('enable_flash', True):
                 backends.append(SDPBackend.FLASH_ATTENTION)
-            if self.flash_config.get('enable_mem_efficient', True):
+            if config.get('enable_mem_efficient', True):
                 backends.append(SDPBackend.EFFICIENT_ATTENTION)
-            if self.flash_config.get('enable_math', True):
+            if config.get('enable_math', True):
                 backends.append(SDPBackend.MATH)
-
             with sdpa_kernel(backends=backends):
                 out = F.scaled_dot_product_attention(
                     q, k, v,
                     attn_mask=mask,
                     dropout_p=self.dropout_rate if self.training else 0.
                 )
-        else:
-            # Fallback for older PyTorch versions.
-            config = self.flash_config if self.flash_config else {}
-            with torch.backends.cuda.sdp_kernel(**config):
-                out = F.scaled_dot_product_attention(
-                    q, k, v,
-                    attn_mask=mask,
-                    dropout_p=self.dropout_rate if self.training else 0.
-                )
-        return out
+            return out
+        # torch < 2.2 fallback: the deprecated context manager.
+        config = self.flash_config or {}
+        with torch.backends.cuda.sdp_kernel(**config):
+            return F.scaled_dot_product_attention(
+                q, k, v,
+                attn_mask=mask,
+                dropout_p=self.dropout_rate if self.training else 0.
+            )
 
     def split_heads(self, x):
         bs, length, _ = x.shape

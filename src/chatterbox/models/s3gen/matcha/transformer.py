@@ -2,22 +2,24 @@ from typing import Any, Dict, Optional
 
 import torch
 import torch.nn as nn
-from diffusers.models.activations import (
+
+# PATCHED (src/PATCHES.md P-011, P-020, P-021): these eight symbols used to be
+# imported from `diffusers` (`models.attention`, `models.attention_processor`
+# and `utils.torch_utils`). They now come from `._diffusers_compat`, a local
+# copy of the diffusers implementations reduced to what this file reaches, so
+# the vendored decoder has no `diffusers` dependency at all. Upstream also
+# imported `LoRACompatibleLinear` from `diffusers.models.lora`; modern diffusers
+# no longer exports it, and it only added optional LoRA scaling that this
+# inference-only model never uses, so both call sites below use plain `nn.Linear`.
+from ._diffusers_compat import (
     GEGLU,
     GELU,
-    ApproximateGELU,
-)
-from diffusers.models.normalization import (
     AdaLayerNorm,
     AdaLayerNormZero,
+    ApproximateGELU,
+    Attention,
+    maybe_allow_in_graph,
 )
-
-from diffusers.models.attention_processor import Attention
-
-# deprecated LoRACompatibleLinear
-# from diffusers.models.lora import LoRACompatibleLinear
-
-from diffusers.utils.torch_utils import maybe_allow_in_graph
 
 
 class SnakeBeta(nn.Module):
@@ -51,9 +53,7 @@ class SnakeBeta(nn.Module):
         """
         super().__init__()
         self.in_features = out_features if isinstance(out_features, list) else [out_features]
-        
-	#  Switched to standard torch.nn.Linear
-        self.proj = nn.Linear(in_features, out_features)
+        self.proj = nn.Linear(in_features, out_features)  # PATCHED (src/PATCHES.md P-011)
 
         # initialize alpha
         self.alpha_logscale = alpha_logscale
@@ -131,9 +131,7 @@ class FeedForward(nn.Module):
         # project dropout
         self.net.append(nn.Dropout(dropout))
         # project out
-
-        # Switched to standard torch.nn.Linear
-        self.net.append(nn.Linear(inner_dim, dim_out))
+        self.net.append(nn.Linear(inner_dim, dim_out))  # PATCHED (src/PATCHES.md P-011)
         # FF as used in Vision Transformer, MLP-Mixer, etc. have a final dropout
         if final_dropout:
             self.net.append(nn.Dropout(dropout))

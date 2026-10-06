@@ -259,7 +259,7 @@ class VoiceEncoder(nn.Module):
         """
         if sample_rate != self.hp.sample_rate:
             wavs = [
-                librosa.resample(wav, orig_sr=sample_rate, target_sr=self.hp.sample_rate, res_type="kaiser_best")
+                librosa.resample(wav, orig_sr=sample_rate, target_sr=self.hp.sample_rate, res_type="kaiser_fast")
                 for wav in wavs
             ]
 

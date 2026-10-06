@@ -5,9 +5,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from conformer import ConformerBlock
-from diffusers.models.activations import get_activation
 from einops import pack, rearrange, repeat
 
+# PATCHED (src/PATCHES.md P-020, P-022): `get_activation` used to be imported
+# from `diffusers.models.activations`; it now comes from `._diffusers_compat`,
+# the local copy of the diffusers symbols this decoder reaches. See that module
+# for what was dropped and why.
+from ._diffusers_compat import get_activation
 from .transformer import BasicTransformerBlock
 
 

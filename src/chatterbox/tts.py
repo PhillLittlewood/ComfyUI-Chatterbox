@@ -1,13 +1,21 @@
-import logging
 from dataclasses import dataclass
 from pathlib import Path
 
+import logging
+
 import librosa
 import torch
-import perth
 import torch.nn.functional as F
 from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file
+
+# PATCHED (src/PATCHES.md P-023): `perth` (the optional watermarking library) is
+# a hard import upstream, so `import chatterbox.tts` dies without it. It is only
+# needed for `apply_watermark`, so a missing library degrades to no watermark.
+try:
+    import perth
+except ImportError:
+    perth = None
 
 from .models.t3 import T3
 from .models.s3tokenizer import S3_SR, S3_TOKEN_RATE, drop_invalid_tokens
@@ -16,9 +24,83 @@ from .models.tokenizers import EnTokenizer
 from .models.voice_encoder import VoiceEncoder
 from .models.t3.modules.cond_enc import T3Cond
 
-logger = logging.getLogger(__name__)
 
 REPO_ID = "ResembleAI/chatterbox"
+
+# PATCHED (src/PATCHES.md P-027): the file set a classic pack has to hold, and
+# an up-front check for it. Upstream reaches its first `load_file` on a path that
+# does not exist and dies with `FileNotFoundError: .../ve.safetensors`, which
+# names one file and leaves the user guessing about the other three. An
+# arbitrary local directory -- a community finetune, a hand-assembled pack -- has
+# to clear the same bar as an official one, and be told the same way when it does
+# not. Used by `ChatterboxTTS.from_local`; the other three entry points carry the
+# same check against their own file sets.
+REQUIRED_CHECKPOINT_FILES = (
+    "ve.safetensors",
+    "t3_cfg.safetensors",
+    "s3gen.safetensors",
+    "tokenizer.json",
+)
+
+
+def _require_checkpoint_files(ckpt_dir, required):
+    """Raise ``FileNotFoundError`` naming every file in ``required`` that is absent.
+
+    Args:
+        ckpt_dir: The checkpoint directory.
+        required: Filenames the entry point cannot build a model without.
+
+    Raises:
+        FileNotFoundError: One or more files are missing. The message lists the
+            missing names first, then the full set, because the first is what
+            the user has to fix and the second is what tells them whether the
+            directory is a Chatterbox pack at all.
+    """
+    missing = [name for name in required if not (Path(ckpt_dir) / name).is_file()]
+    if not missing:
+        return
+    raise FileNotFoundError(
+        f"The Chatterbox checkpoint at '{ckpt_dir}' is incomplete. "
+        f"Missing: {', '.join(missing)}. A complete pack holds "
+        f"{', '.join(required)}."
+    )
+
+
+# PATCHED (src/PATCHES.md P-002): duration of one S3 speech token (0.04 s).
+S3_TOKEN_DURATION_S = 1 / S3_TOKEN_RATE
+
+# PATCHED (src/PATCHES.md P-023): one named logger for the "no watermarking
+# library" warning, shared by every entry point so a node that loads several
+# models still produces a single, greppable warning per entry point.
+WATERMARK_LOGGER = logging.getLogger("chatterbox.watermark")
+
+_watermark_warning_emitted = False
+
+
+def _apply_watermark(wav, sample_rate, watermarker, watermark=True):
+    """Watermark ``wav`` unless the caller opted out or ``perth`` is absent.
+
+    PATCHED (src/PATCHES.md P-023): upstream calls
+    ``self.watermarker.apply_watermark(...)`` unconditionally. This keeps that
+    behaviour when ``watermark=True`` and a watermarker exists, skips the call
+    when the caller passed ``watermark=False``, and -- when watermarking was
+    asked for but the optional library is not installed -- warns once and
+    returns the audio untouched instead of raising.
+    """
+    global _watermark_warning_emitted
+
+    if not watermark:
+        return wav
+    if watermarker is None:
+        if not _watermark_warning_emitted:
+            _watermark_warning_emitted = True
+            WATERMARK_LOGGER.warning(
+                "watermark=True was requested but the optional 'resemble-perth' "
+                "library is not installed; returning un-watermarked audio. "
+                "Install it, or pass watermark=False to silence this."
+            )
+        return wav
+    return watermarker.apply_watermark(wav, sample_rate=sample_rate)
 
 
 def punc_norm(text: str) -> str:
@@ -104,21 +186,21 @@ class Conditionals:
         kwargs = torch.load(fpath, map_location=map_location, weights_only=True)
         return cls(T3Cond(**kwargs['t3']), kwargs['gen'])
 
-# helper function for padding
+
+# PATCHED (src/PATCHES.md P-002)
 def _pad_wav_to_40ms_multiple(wav: torch.Tensor, sr: int) -> torch.Tensor:
+    """Pad a waveform to a multiple of 40 ms.
+
+    The mel spectrogram hops every 20 ms while the S3 speech tokenizer emits one
+    token every 40 ms. Without this alignment the tokenizer rounds the clip
+    length independently and the two drift apart, which S3Gen detects as
+    ``mel length != 2 * token length`` and only repairs by truncating tokens.
     """
-    Pads a waveform to be a multiple of 40ms to prevent rounding errors between
-    the mel spectrogram (20ms hop) and the speech tokenizer (40ms hop).
-    """
-    S3_TOKEN_DURATION_S = 1 / S3_TOKEN_RATE  # 0.04 seconds
     samples_per_token = int(sr * S3_TOKEN_DURATION_S)
-    current_samples = wav.shape[-1]
-    remainder = current_samples % samples_per_token
-    if remainder != 0:
-        padding_needed = samples_per_token - remainder
-        padded_wav = F.pad(wav, (0, padding_needed))
-        return padded_wav
-    return wav
+    remainder = wav.shape[-1] % samples_per_token
+    if remainder == 0:
+        return wav
+    return F.pad(wav, (0, samples_per_token - remainder))
 
 
 class ChatterboxTTS:
@@ -141,13 +223,21 @@ class ChatterboxTTS:
         self.tokenizer = tokenizer
         self.device = device
         self.conds = conds
-        self.watermarker = perth.PerthImplicitWatermarker()
+        # PATCHED (src/PATCHES.md P-023): `perth` may be absent.
+        self.watermarker = perth.PerthImplicitWatermarker() if perth is not None else None
 
     @classmethod
     def from_local(cls, ckpt_dir, device) -> 'ChatterboxTTS':
         ckpt_dir = Path(ckpt_dir)
 
+        # PATCHED (src/PATCHES.md P-027): an incomplete directory is refused
+        # here, by name, instead of half way through the first `load_file`.
+        _require_checkpoint_files(ckpt_dir, REQUIRED_CHECKPOINT_FILES)
+
         # Always load to CPU first for non-CUDA devices to handle CUDA-saved models
+        # PATCHED (src/PATCHES.md P-003): compare `str(device)`. ComfyUI passes a
+        # `torch.device`, and `torch.device(...) in ["cpu", "mps"]` is False for
+        # every device, so a CPU load would try to restore CUDA tensors.
         if str(device) in ["cpu", "mps"]:
             map_location = torch.device('cpu')
         else:
@@ -187,9 +277,9 @@ class ChatterboxTTS:
         # Check if MPS is available on macOS
         if device == "mps" and not torch.backends.mps.is_available():
             if not torch.backends.mps.is_built():
-                logger.warning("MPS not available because the current PyTorch install was not built with MPS enabled.")
+                print("MPS not available because the current PyTorch install was not built with MPS enabled.")
             else:
-                logger.warning("MPS not available because the current MacOS version is not 12.3+ and/or you do not have an MPS-enabled device on this machine.")
+                print("MPS not available because the current MacOS version is not 12.3+ and/or you do not have an MPS-enabled device on this machine.")
             device = "cpu"
 
         for fpath in ["ve.safetensors", "t3_cfg.safetensors", "s3gen.safetensors", "tokenizer.json", "conds.pt"]:
@@ -200,12 +290,13 @@ class ChatterboxTTS:
     def prepare_conditionals(self, wav_fpath, exaggeration=0.5):
         ## Load reference wav
         s3gen_ref_wav, _sr = librosa.load(wav_fpath, sr=S3GEN_SR)
-        
-        # Convert to tensor and pad to a 40ms boundary
+
+        # PATCHED (src/PATCHES.md P-004): round-trip through torch so the clip can
+        # be padded onto the 40 ms token grid before resampling. Resampling a
+        # fractional number of tokens produces a mel/token length mismatch
+        # downstream, which S3Gen silently repairs by dropping tokens.
         s3gen_ref_wav = torch.from_numpy(s3gen_ref_wav).float().unsqueeze(0)
         s3gen_ref_wav = _pad_wav_to_40ms_multiple(s3gen_ref_wav, S3GEN_SR)
-        
-        # Now convert back to numpy for librosa, or use torch audio for resampling
         s3gen_ref_wav_np = s3gen_ref_wav.squeeze(0).numpy()
 
         ref_16k_wav = librosa.resample(s3gen_ref_wav_np, orig_sr=S3GEN_SR, target_sr=S3_SR)
@@ -240,9 +331,12 @@ class ChatterboxTTS:
         exaggeration=0.5,
         cfg_weight=0.5,
         temperature=0.8,
+        # PATCHED (src/PATCHES.md P-005): ComfyUI node surface.
         pbar=None,
         max_new_tokens=1000,
-        flow_cfg_scale=0.7
+        flow_cfg_scale=0.7,
+        # PATCHED (src/PATCHES.md P-023): opt out of watermarking entirely.
+        watermark=True,
     ):
         if audio_prompt_path:
             self.prepare_conditionals(audio_prompt_path, exaggeration=exaggeration)
@@ -280,7 +374,7 @@ class ChatterboxTTS:
                 repetition_penalty=repetition_penalty,
                 min_p=min_p,
                 top_p=top_p,
-                pbar=pbar
+                pbar=pbar,
             )
             # Extract only the conditional batch.
             speech_tokens = speech_tokens[0]
@@ -295,8 +389,8 @@ class ChatterboxTTS:
             wav, _ = self.s3gen.inference(
                 speech_tokens=speech_tokens,
                 ref_dict=self.conds.gen,
-                flow_cfg_scale=flow_cfg_scale 
+                flow_cfg_scale=flow_cfg_scale,
             )
             wav = wav.squeeze(0).detach().cpu().numpy()
-            watermarked_wav = self.watermarker.apply_watermark(wav, sample_rate=self.sr)
+            watermarked_wav = _apply_watermark(wav, self.sr, self.watermarker, watermark)
         return torch.from_numpy(watermarked_wav).unsqueeze(0)
