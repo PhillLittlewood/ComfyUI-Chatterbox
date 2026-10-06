@@ -56,6 +56,9 @@ CHUNK_METHOD_SMART = "smart"
 VC_REFINEMENT_CACHE = RefinementCache()
 
 
+_CATEGORY = "WMNodes/sound/vc"
+
+
 class ChatterboxVCNode(io.ComfyNode):
     """Convert the voice in a speech clip while keeping its content."""
 
@@ -72,7 +75,7 @@ class ChatterboxVCNode(io.ComfyNode):
         return io.Schema(
             node_id="ChatterboxVC",
             display_name="Chatterbox Voice Conversion 🗣️",
-            category="audio/generation",
+            category=_CATEGORY,
             description=(
                 "Convert recorded speech into a Chatterbox voice while keeping "
                 "the words and the delivery."

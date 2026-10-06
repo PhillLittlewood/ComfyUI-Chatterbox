@@ -75,6 +75,9 @@ MTL_MODEL_VERSION_OPTIONS: tuple[str, ...] = tuple(
 MTL_MODEL_VERSION_DEFAULT: str = MTL_T3_MODELS[MTL_DEFAULT_T3_MODEL]
 
 
+_CATEGORY = "WMNodes/sound/tts"
+
+
 class ChatterboxMTLTTSNode(io.ComfyNode):
     """Synthesise speech in any of Chatterbox's 23 languages."""
 
@@ -91,7 +94,7 @@ class ChatterboxMTLTTSNode(io.ComfyNode):
         return io.Schema(
             node_id="ChatterboxMTLTTS",
             display_name="Chatterbox Multilingual TTS 🌍",
-            category="audio/generation",
+            category=_CATEGORY,
             description=(
                 "Synthesise speech in 23 languages with the Chatterbox "
                 "multilingual model, in v1, v2 or v3."

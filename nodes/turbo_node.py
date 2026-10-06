@@ -63,6 +63,9 @@ __all__ = ["ChatterboxTurboTTSNode", "TURBO_TAG_LIST"]
 TURBO_TAG_LIST: str = " ".join(f"[{tag}]" for tag in TURBO_TAGS)
 
 
+_CATEGORY = "WMNodes/sound/tts"
+
+
 class ChatterboxTurboTTSNode(io.ComfyNode):
     """Fast English speech synthesis with paralinguistic tags."""
 
@@ -74,7 +77,7 @@ class ChatterboxTurboTTSNode(io.ComfyNode):
         return io.Schema(
             node_id="ChatterboxTurboTTS",
             display_name="Chatterbox Turbo TTS ⚡",
-            category="audio/generation",
+            category=_CATEGORY,
             description=(
                 "Fast English speech synthesis with Chatterbox Turbo (350M) or "
                 "Nano (110M). Lower VRAM, one-step decoding, paralinguistic "

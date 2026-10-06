@@ -49,6 +49,9 @@ from .common import default_pack_name, runtime_widgets, silent_audio, validate_c
 __all__ = ["ChatterboxTTSNode"]
 
 
+_CATEGORY = "WMNodes/sound/tts"
+
+
 class ChatterboxTTSNode(io.ComfyNode):
     """Synthesise speech from text with a Chatterbox voice pack."""
 
@@ -66,7 +69,7 @@ class ChatterboxTTSNode(io.ComfyNode):
         return io.Schema(
             node_id="ChatterboxTTS",
             display_name="Chatterbox TTS 📢",
-            category="audio/generation",
+            category=_CATEGORY,
             description=(
                 "Synthesise speech from text with a Chatterbox voice pack. "
                 "Optionally clone a voice from a reference clip."

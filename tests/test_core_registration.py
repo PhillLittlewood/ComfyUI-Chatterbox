@@ -61,6 +61,15 @@ EXPECTED_OUTPUTS = {
     ChatterboxVCNode: ["AUDIO"],
 }
 
+EXPECTED_CATEGORIES = {
+    ChatterboxTTSNode: "WMNodes/sound/tts",
+    ChatterboxMTLTTSNode: "WMNodes/sound/tts",
+    ChatterboxTurboTTSNode: "WMNodes/sound/tts",
+    ChatterboxSRTNode: "WMNodes/sound/util",
+    ChatterboxDialogNode: "WMNodes/sound/tts",
+    ChatterboxVCNode: "WMNodes/sound/vc",
+}
+
 
 def run(coro):
     """Drive one coroutine from a synchronous test."""
@@ -152,7 +161,7 @@ class TestSchemaFinalizesUnderTheRealCore:
         info = node_cls.GET_NODE_INFO_V1()
         assert info["name"] == node_cls.GET_SCHEMA().node_id
         assert info["output"] == EXPECTED_OUTPUTS[node_cls]
-        assert info["category"] == "audio/generation"
+        assert info["category"] == EXPECTED_CATEGORIES[node_cls]
 
     def test_relative_python_module_is_settable(self, node_cls) -> None:
         """ComfyUI stamps this at load time (``nodes.py``).

@@ -89,6 +89,9 @@ _DEMO_SRT = (
 )
 
 
+_CATEGORY = "WMNodes/sound/util"
+
+
 class ChatterboxSRTNode(io.ComfyNode):
     """Speak a timed script and emit a subtitle file that matches the audio."""
 
@@ -100,7 +103,7 @@ class ChatterboxSRTNode(io.ComfyNode):
         return io.Schema(
             node_id="ChatterboxSRT",
             display_name="Chatterbox SRT / Subtitles 📝",
-            category="audio/generation",
+            category=_CATEGORY,
             description=(
                 "Speak a timed SRT script and reconcile the model's actual "
                 "timings with the file's, returning an adjusted subtitle file "

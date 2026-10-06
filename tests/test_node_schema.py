@@ -78,7 +78,9 @@ class TestTTSSchema:
     def test_display_name_and_category(self, snapshot: dict) -> None:
         node = _schema(ChatterboxTTSNode)
         assert node.display_name == snapshot["nodes"][TTS_NODE_ID]["display_name"]
-        assert node.category == snapshot["nodes"][TTS_NODE_ID]["CATEGORY"]
+        # Category was moved to the WMNodes/sound group at the owner's
+        # direction; the snapshot keeps the V1 value as history only.
+        assert node.category == "WMNodes/sound/tts"
 
     def test_required_inputs_equal_the_snapshot_exactly(self, snapshot: dict) -> None:
         """The load-bearing assertion. Exact tuple equality, twice over.
@@ -168,7 +170,8 @@ class TestVCSchema:
     def test_display_name_and_category(self, snapshot: dict) -> None:
         node = _schema(ChatterboxVCNode)
         assert node.display_name == snapshot["nodes"][VC_NODE_ID]["display_name"]
-        assert node.category == snapshot["nodes"][VC_NODE_ID]["CATEGORY"]
+        # Category moved to WMNodes/sound; see the TTS note above.
+        assert node.category == "WMNodes/sound/vc"
 
     def test_required_inputs_equal_the_snapshot_exactly(self, snapshot: dict) -> None:
         expected = snapshot_signatures(snapshot, VC_NODE_ID, "required")

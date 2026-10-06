@@ -111,7 +111,7 @@ is downloaded on first use.
 
 ### Nodes
 
-All six nodes live in the `audio/generation` category, in the Add-Node-menu order
+All six nodes live in the `WMNodes/sound` category group (tts / vc / util sub-groups), in the Add-Node-menu order
 below. Load a ready-made graph from
 [`example_workflows/`](./example_workflows) to see them wired up.
 
@@ -287,7 +287,7 @@ absent.
 | `turbo` | `pyloudnorm` | Loudness normalisation for the Turbo node. |
 
 ```bash
-pip install "chatterbox-tts-node[watermarking]"
+pip install "ComfyUI-ChatterboxTTS[watermarking]"
 ```
 
 The watermarking import is defensive *inside the vendored code itself*, which is

@@ -63,6 +63,9 @@ from .mtl_node import MTL_MODEL_VERSION_DEFAULT, MTL_MODEL_VERSION_OPTIONS
 __all__ = ["ChatterboxDialogNode"]
 
 
+_CATEGORY = "WMNodes/sound/tts"
+
+
 class ChatterboxDialogNode(io.ComfyNode):
     """Speak a ``SPEAKER A:`` / ``SPEAKER B:`` script in separate voices."""
 
@@ -74,7 +77,7 @@ class ChatterboxDialogNode(io.ComfyNode):
         return io.Schema(
             node_id="ChatterboxDialog",
             display_name="Chatterbox Multi-Speaker Dialog 🎭",
-            category="audio/generation",
+            category=_CATEGORY,
             description=(
                 "Speak a SPEAKER A: / SPEAKER B: conversation with a separate "
                 "voice per speaker, returning the mixed dialog plus each "
