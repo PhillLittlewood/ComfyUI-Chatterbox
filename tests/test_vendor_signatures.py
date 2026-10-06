@@ -690,6 +690,19 @@ class TestHalfDtypeContracts:
             "cannot represent every token id)"
         )
 
+    def test_turbo_from_local_accepts_the_nano_tokenizer_layout(self) -> None:
+        block = self._class_method_source(
+            "tts_turbo.py", "ChatterboxTurboTTS", "from_local"
+        )
+        assert 'if (ckpt_dir / "tokenizer.json").is_file()' in block, (
+            "P-035: the tokenizer file must follow the pack layout -- the Nano "
+            "repo ships vocab.json + merges.txt and no tokenizer.json"
+        )
+        assert "(*REQUIRED_CHECKPOINT_FILES, tokenizer_file," in block, (
+            "P-035: the completeness check must include the layout-chosen "
+            "tokenizer file next to the variant T3 checkpoint"
+        )
+
     def test_t3_cond_enc_aligns_fp32_conditioning_to_the_projectors(self) -> None:
         block = self._function_source("models/t3/modules/cond_enc.py", "forward")
         assert (

@@ -42,15 +42,18 @@ logger = logging.getLogger(__name__)
 REPO_ID = "ResembleAI/chatterbox-turbo"
 NANO_REPO_ID = "ResembleAI/chatterbox-nano"
 
-# PATCHED (src/PATCHES.md P-027): the file set a Turbo (or Nano) pack has to
-# hold *besides* the variant-selected T3 checkpoint, and the up-front check for
-# it. `from_local` has no separate Nano module -- Nano is a second set of weights
-# in this one -- so the variant is checked by the caller and kept out of this
-# tuple.
+# PATCHED (src/PATCHES.md P-027 + P-035): the file set a Turbo (or Nano) pack
+# has to hold *besides* the variant-selected T3 checkpoint, and the up-front
+# check for it. `from_local` has no separate Nano module -- Nano is a second
+# set of weights in this one -- so the variant is checked by the caller and
+# kept out of this tuple. P-035: ``s3gen_meanflow.safetensors`` is required
+# (``S3Gen(meanflow=True)`` loads it unconditionally), and the tokenizer is
+# checked per layout in ``from_local`` -- Turbo ships ``tokenizer.json`` while
+# Nano ships the HF fast layout (``vocab.json`` + ``merges.txt``).
 REQUIRED_CHECKPOINT_FILES = (
     "ve.safetensors",
     "s3gen.safetensors",
-    "tokenizer.json",
+    "s3gen_meanflow.safetensors",
 )
 
 
@@ -213,11 +216,19 @@ class ChatterboxTurboTTS:
     def from_local(cls, ckpt_dir, device, nano=False) -> 'ChatterboxTurboTTS':
         ckpt_dir = Path(ckpt_dir)
 
-        # PATCHED (src/PATCHES.md P-027): an incomplete directory is refused
-        # here, by name, instead of at the first `load_file`.
+        # PATCHED (src/PATCHES.md P-027 + P-035): an incomplete directory is
+        # refused here, by name, instead of at the first `load_file`. P-035:
+        # the tokenizer file follows the pack's layout -- Turbo ships
+        # ``tokenizer.json``, Nano ships ``vocab.json`` + ``merges.txt``
+        # (``AutoTokenizer.from_pretrained`` below reads either).
+        tokenizer_file = (
+            "tokenizer.json"
+            if (ckpt_dir / "tokenizer.json").is_file()
+            else "vocab.json"
+        )
         _require_checkpoint_files(
             ckpt_dir,
-            (*REQUIRED_CHECKPOINT_FILES,
+            (*REQUIRED_CHECKPOINT_FILES, tokenizer_file,
              "t3_nano_v1.safetensors" if nano else "t3_turbo_v1.safetensors"),
         )
 
