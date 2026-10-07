@@ -68,6 +68,21 @@ __all__ = [
 # grapheme map the vendored ``MTLTokenizer`` loads instead of a fast tokenizer.
 MTL_TOKENIZER_FILE = "grapheme_mtl_merged_expanded_v1.json"
 
+# ── Shared assets ─────────────────────────────────────────────────────
+# Byte-identical across every repo that ships them (verified 2026-10-07 by
+# sha256 and HF LFS OIDs), so they are fetched at most once into the
+# reserved `_shared` store and hardlinked into each pack that needs them.
+# Downloads never fetch them into a pack directly.
+SHARED_ASSET_DIR_NAME = "_shared"
+SHARED_ASSET_FILES = frozenset(
+    {
+        "ve.safetensors",
+        "s3gen.safetensors",
+        "s3gen_v3.safetensors",
+        MTL_TOKENIZER_FILE,
+    }
+)
+
 
 MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
     # The pack a saved workflow names by default. Monolingual English, voice
@@ -87,7 +102,7 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "architecture": "chatterbox_multilingual",
         "sample_rate": 24000,
         "size_gb": 2.7,
-        "files": ["t3_cfg.safetensors", "ve.safetensors", "s3gen.safetensors", "tokenizer.json", "conds.pt"],
+        "files": ["t3_cfg.safetensors", "ve.safetensors", "s3gen.safetensors", MTL_TOKENIZER_FILE, "conds.pt"],
         "description": "Original single-language T3 weights, used by the multilingual loader as its v1.",
     },
     "T3_v2": {
@@ -95,7 +110,7 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "architecture": "chatterbox_multilingual",
         "sample_rate": 24000,
         "size_gb": 2.7,
-        "files": ["t3_mtl23ls_v2.safetensors", "ve.safetensors", "s3gen.safetensors", "tokenizer.json", "conds.pt"],
+        "files": ["t3_mtl23ls_v2.safetensors", "ve.safetensors", "s3gen.safetensors", MTL_TOKENIZER_FILE, "conds.pt"],
         "description": "23-language multilingual T3 (upstream default).",
     },
     "T3_v3": {
@@ -103,21 +118,22 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "architecture": "chatterbox_multilingual",
         "sample_rate": 24000,
         "size_gb": 2.7,
-        "files": ["t3_mtl23ls_v3.safetensors", "ve.safetensors", "s3gen.safetensors", "tokenizer.json", "conds.pt"],
+        "files": ["t3_mtl23ls_v3.safetensors", "ve.safetensors", "s3gen.safetensors", MTL_TOKENIZER_FILE, "conds.pt"],
         "description": "23-language multilingual T3, newer checkpoint: better similarity, fewer hallucinations.",
     },
     # The Single Language Pack: six dedicated finetunes of the multilingual
     # V3 family, one per priority language (2026-06 release). Each ships its
-    # own per-language t3 checkpoint ("t3_checkpoint") and s3gen_v3.pt; only
-    # zh-cmn bundles ve.pt and conds.pt -- the rest take ve.pt from the shared
-    # repo at load time ("companion_files") and have NO built-in voice, so a
-    # reference clip is required.
+    # own per-language t3 checkpoint ("t3_checkpoint"); the s3gen_v3 decoder,
+    # grapheme tokenizer and voice encoder are byte-identical across all six
+    # and come from the shared store (SHARED_ASSET_FILES). Only zh-cmn
+    # bundles a conds.pt (built-in voice); the rest have none, so a reference
+    # clip is required.
     "chatterbox-multilingual-zh-cmn": {
         "repo_id": "ResembleAI/Chatterbox-Multilingual-zh-cmn",
         "architecture": "chatterbox_multilingual",
         "sample_rate": 24000,
         "size_gb": 2.8,
-        "files": ["t3_zh_cmn.safetensors", "s3gen_v3.pt", MTL_TOKENIZER_FILE, "ve.pt", "conds.pt"],
+        "files": ["t3_zh_cmn.safetensors", "s3gen_v3.safetensors", MTL_TOKENIZER_FILE, "conds.pt"],
         "t3_checkpoint": "t3_zh_cmn.safetensors",
         "language": "zh",
         "description": "Single Language Pack: Chinese (zh). Ships a built-in voice.",
@@ -127,10 +143,9 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "architecture": "chatterbox_multilingual",
         "sample_rate": 24000,
         "size_gb": 2.6,
-        "files": ["t3_es_mx_latam.safetensors", "s3gen_v3.pt", MTL_TOKENIZER_FILE],
+        "files": ["t3_es_mx_latam.safetensors", "s3gen_v3.safetensors", MTL_TOKENIZER_FILE],
         "t3_checkpoint": "t3_es_mx_latam.safetensors",
         "language": "es",
-        "companion_files": {"ve.pt": CHATTERBOX_REPO_ID},
         "description": "Single Language Pack: Latin-American Spanish (es). Needs a reference clip.",
     },
     "chatterbox-multilingual-es-es": {
@@ -138,10 +153,9 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "architecture": "chatterbox_multilingual",
         "sample_rate": 24000,
         "size_gb": 2.6,
-        "files": ["t3_es_es.safetensors", "s3gen_v3.pt", MTL_TOKENIZER_FILE],
+        "files": ["t3_es_es.safetensors", "s3gen_v3.safetensors", MTL_TOKENIZER_FILE],
         "t3_checkpoint": "t3_es_es.safetensors",
         "language": "es",
-        "companion_files": {"ve.pt": CHATTERBOX_REPO_ID},
         "description": "Single Language Pack: Spain Spanish (es). Needs a reference clip.",
     },
     "chatterbox-multilingual-pt-br": {
@@ -149,10 +163,9 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "architecture": "chatterbox_multilingual",
         "sample_rate": 24000,
         "size_gb": 2.6,
-        "files": ["t3_pt_br.safetensors", "s3gen_v3.pt", MTL_TOKENIZER_FILE],
+        "files": ["t3_pt_br.safetensors", "s3gen_v3.safetensors", MTL_TOKENIZER_FILE],
         "t3_checkpoint": "t3_pt_br.safetensors",
         "language": "pt",
-        "companion_files": {"ve.pt": CHATTERBOX_REPO_ID},
         "description": "Single Language Pack: Brazilian Portuguese (pt). Needs a reference clip.",
     },
     "chatterbox-multilingual-pt-pt": {
@@ -160,10 +173,9 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "architecture": "chatterbox_multilingual",
         "sample_rate": 24000,
         "size_gb": 2.6,
-        "files": ["t3_pt_pt.safetensors", "s3gen_v3.pt", MTL_TOKENIZER_FILE],
+        "files": ["t3_pt_pt.safetensors", "s3gen_v3.safetensors", MTL_TOKENIZER_FILE],
         "t3_checkpoint": "t3_pt_pt.safetensors",
         "language": "pt",
-        "companion_files": {"ve.pt": CHATTERBOX_REPO_ID},
         "description": "Single Language Pack: Portugal Portuguese (pt). Needs a reference clip.",
     },
     "chatterbox-multilingual-hi": {
@@ -171,10 +183,9 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "architecture": "chatterbox_multilingual",
         "sample_rate": 24000,
         "size_gb": 2.6,
-        "files": ["t3_hi.safetensors", "s3gen_v3.pt", MTL_TOKENIZER_FILE],
+        "files": ["t3_hi.safetensors", "s3gen_v3.safetensors", MTL_TOKENIZER_FILE],
         "t3_checkpoint": "t3_hi.safetensors",
         "language": "hi",
-        "companion_files": {"ve.pt": CHATTERBOX_REPO_ID},
         "description": "Single Language Pack: Hindi (hi). Needs a reference clip.",
     },
     # The Turbo family, in ONE folder. Turbo is the family's name upstream
@@ -190,7 +201,7 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "architecture": "chatterbox_turbo",
         "sample_rate": 24000,
         "size_gb": 1.4,
-        "files": ["t3_turbo_v1.safetensors", "ve.safetensors", "s3gen.safetensors", "s3gen_meanflow.safetensors", "tokenizer.json", "conds.pt"],
+        "files": ["t3_turbo_v1.safetensors", "t3_turbo_v1.yaml", "ve.safetensors", "s3gen.safetensors", "s3gen_meanflow.safetensors", "tokenizer.json", "conds.pt", "vocab.json", "merges.txt", "tokenizer_config.json", "added_tokens.json", "special_tokens_map.json"],
         "description": "350M English model with paralinguistic tags; lower VRAM.",
     },
     # A quarter of Turbo again; runs on CPU at realtime. Shares the Turbo
@@ -203,12 +214,15 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "size_gb": 2.9,
         "files": [
             "t3_nano_v1.safetensors",
+            "t3_nano_v1.yaml",
             "ve.safetensors",
             "s3gen.safetensors",
             "s3gen_meanflow.safetensors",
             "vocab.json",
             "merges.txt",
             "tokenizer_config.json",
+            "added_tokens.json",
+            "special_tokens_map.json",
             "conds.pt",
         ],
         "description": "Turbo-family 110M model for CPU and tight latency budgets. "
@@ -227,6 +241,10 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "sample_rate": 24000,
         "size_gb": 3.1,
         "files": ["t3_flash.safetensors", "s3gen.safetensors", "ve.safetensors", "tokenizer.json"],
+        # Flash's s3gen.safetensors is a DIFFERENT decoder than the one the
+        # other families share despite the same filename -- it must never be
+        # resolved from, or linked into, the shared store.
+        "unique_files": ["s3gen.safetensors"],
         "description": "Block-diffusion Chatterbox: fast parallel decoding. Needs a "
         "reference audio clip.",
     },
@@ -260,7 +278,8 @@ CHATTERBOX_WEIGHT_FILES = (
     "t3_flash.safetensors",
     "ve.safetensors",
     "s3gen.safetensors",
-    "s3gen_v3.pt",  # Single Language Pack decoder (P-036)
+    "s3gen_v3.safetensors",  # Single Language Pack decoder (P-036)
+    "s3gen_v3.pt",  # legacy serialization, still loaded when present
     "s3gen.pt",
 )
 

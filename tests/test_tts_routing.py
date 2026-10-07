@@ -601,13 +601,13 @@ class TestSingleLanguagePackRouting:
             ChatterboxLoader._resolve_mtl_s3gen_file(
                 str(tmp_path / "missing"), "chatterbox-multilingual-zh-cmn"
             )
-            == "s3gen_v3.pt"
+            == "s3gen_v3.safetensors"
         )
         assert (
             ChatterboxLoader._resolve_mtl_s3gen_file(
                 str(tmp_path / "missing"), "unknown-local-pack"
             )
-            == "s3gen.pt"
+            == "s3gen_v3.safetensors"
         )
 
     def test_a_slp_dir_sniffs_as_multilingual(self, tmp_path) -> None:

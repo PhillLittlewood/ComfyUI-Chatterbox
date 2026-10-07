@@ -33,16 +33,24 @@ from __future__ import annotations
 import inspect
 import logging
 import os
+import shutil
 from typing import Any, Optional
 
 import torch
 
-from .constants import DEFAULT_MODEL_PACK_NAME, MTL_T3_MODELS
+from .constants import (
+    CHATTERBOX_FILES_TO_DOWNLOAD,
+    DEFAULT_MODEL_PACK_NAME,
+    MTL_T3_MODELS,
+)
 from .model_discovery import get_model_pack_path
 from .model_info import (
     AVAILABLE_CHATTERBOX_MODELS,
     CHATTERBOX_WEIGHT_FILES,
     MODEL_CONFIGS,
+    MTL_TOKENIZER_FILE,
+    SHARED_ASSET_DIR_NAME,
+    SHARED_ASSET_FILES,
     is_chatterbox_model_dir,
 )
 
@@ -76,15 +84,24 @@ _WEIGHT_ATTRIBUTES = ("t3", "s3gen", "ve")
 # checkpoint is appended by the caller, because its name is not fixed -- and
 # so is the s3gen decoder's: the Single Language Packs ship ``s3gen_v3.pt``
 # (P-036), the shared repo ships ``s3gen.pt``.
-MTL_CHECKPOINT_FILES: tuple[str, ...] = (
-    "ve.pt",
-    "grapheme_mtl_merged_expanded_v1.json",
-)
+#: Files every multilingual pack holds *besides* the resolved T3, voice
+#: encoder and s3gen checkpoints (P-036 resolves those per pack): just the
+#: grapheme tokenizer.
+MTL_CHECKPOINT_FILES: tuple[str, ...] = (MTL_TOKENIZER_FILE,)
 
 #: The s3gen filenames a multilingual pack may carry, in resolution order:
-#: the shared repo's canonical name first, the Single Language Packs' v3
-#: retrain second.
-MTL_S3GEN_CHECKPOINTS: tuple[str, ...] = ("s3gen.pt", "s3gen_v3.pt")
+#: the Single Language Packs' v3 retrain (safetensors first), then the shared
+#: repo's canonical decoder.
+MTL_S3GEN_CHECKPOINTS: tuple[str, ...] = (
+    "s3gen_v3.safetensors",
+    "s3gen_v3.pt",
+    "s3gen.safetensors",
+    "s3gen.pt",
+)
+
+#: Pack folders that historically hold the shared repo's weights. Read-only
+#: search candidates for shared assets; downloads never write into them.
+LEGACY_SHARED_DIRS: tuple[str, ...] = ("chatterbox", DEFAULT_MODEL_PACK_NAME)
 
 #: Turbo and Nano share one layout, and so share one completeness list. The
 #: tokenizer is checked separately: Turbo ships ``tokenizer.json``, Nano ships
@@ -533,7 +550,12 @@ class ChatterboxLoader:
     # -- download ------------------------------------------------------
 
     @staticmethod
-    def _ensure_downloaded(repo_id: str, local_dir: str, model_name: str = "") -> None:
+    def _ensure_downloaded(
+        repo_id: str,
+        local_dir: str,
+        model_name: str = "",
+        allow_patterns: Optional[list[str]] = None,
+    ) -> None:
         """Fetch an official pack from ``repo_id`` when it is not on disk.
 
         The completeness check is :meth:`is_pack_complete` rather than a
@@ -566,6 +588,8 @@ class ChatterboxLoader:
         from huggingface_hub import snapshot_download
 
         kwargs: dict[str, Any] = {"repo_id": repo_id, "local_dir": local_dir}
+        if allow_patterns:
+            kwargs["allow_patterns"] = list(allow_patterns)
         try:
             accepts_symlinks = (
                 "local_dir_use_symlinks" in inspect.signature(snapshot_download).parameters
@@ -583,6 +607,7 @@ class ChatterboxLoader:
         repo_id: str,
         local_dir: str,
         client_id: Optional[str] = None,
+        allow_patterns: Optional[list[str]] = None,
     ) -> None:
         """Ensure the pack exists, preferring the progress-tracking manager.
 
@@ -591,10 +616,23 @@ class ChatterboxLoader:
         blocks the prompt with no way out. The manager is therefore the path
         taken, and :meth:`_ensure_downloaded` is the fallback for when it cannot
         be imported (or has been torn down).
+
+        ``allow_patterns`` narrows the fetch to the named files -- the shared
+        weights are deduplicated away (see ``SHARED_ASSET_FILES``), so a pack
+        download must not drag every byte of the repo along. The manager's API
+        has no patterns parameter, so a filtered fetch goes straight to
+        ``snapshot_download`` (which resumes and skips complete files); the
+        manager keeps serving the unfiltered legacy path.
         """
         if ChatterboxLoader.is_pack_complete(local_dir):
             return
         if not repo_id:
+            return
+
+        if allow_patterns:
+            ChatterboxLoader._ensure_downloaded(
+                repo_id, local_dir, model_name, allow_patterns
+            )
             return
 
         manager = None
@@ -675,7 +713,22 @@ class ChatterboxLoader:
                 model_name,
                 pack_dir,
             )
-            ChatterboxLoader.download_pack(model_name, repo_id, pack_dir, client_id)
+            files = list(entry.get("files") or CHATTERBOX_FILES_TO_DOWNLOAD)
+            unique = set(entry.get("unique_files") or ())
+            ChatterboxLoader.download_pack(
+                model_name,
+                repo_id,
+                pack_dir,
+                client_id,
+                allow_patterns=[
+                    name
+                    for name in files
+                    if name not in SHARED_ASSET_FILES or name in unique
+                ],
+            )
+            ChatterboxLoader._ensure_shared_assets(
+                pack_dir, [name for name in files if name in SHARED_ASSET_FILES]
+            )
             try:
                 os.makedirs(pack_dir, exist_ok=True)
             except OSError as exc:
@@ -735,19 +788,71 @@ class ChatterboxLoader:
         return [name for name in required if not os.path.isfile(os.path.join(pack_dir, name))]
 
     @staticmethod
+    def _shared_store_dir() -> str:
+        """The reserved ``_shared`` directory under the Chatterbox models root."""
+        from .model_discovery import get_models_root
+
+        return os.path.join(get_models_root(), SHARED_ASSET_DIR_NAME)
+
+    @staticmethod
+    def _ensure_shared_assets(pack_dir: str, names) -> None:
+        """Materialize shared weights into ``pack_dir`` under canonical names.
+
+        The shared files (``SHARED_ASSET_FILES``) are byte-identical across
+        every repo that ships them, so each is fetched at most once. Search
+        order: the pack itself (nothing to do), the reserved ``_shared``
+        store, then the legacy full-repo folders a user may already have;
+        only when the file exists nowhere does one ``hf_hub_download`` from
+        the shared Chatterbox repo populate the store. The store copy is then
+        hardlinked into the pack -- both live under the Chatterbox models
+        root, so they share a volume and the link costs no extra disk -- with
+        a plain copy as the fallback for exotic filesystems.
+        """
+        from huggingface_hub import hf_hub_download
+
+        from .constants import CHATTERBOX_REPO_ID
+
+        store = ChatterboxLoader._shared_store_dir()
+        root = os.path.dirname(store)
+        for name in names:
+            target = os.path.join(pack_dir, name)
+            if os.path.isfile(target):
+                continue
+            source = None
+            candidates = [store]
+            candidates.extend(os.path.join(root, d) for d in LEGACY_SHARED_DIRS)
+            for candidate in candidates:
+                probe = os.path.join(candidate, name)
+                if os.path.isfile(probe):
+                    source = probe
+                    break
+            if source is None:
+                os.makedirs(store, exist_ok=True)
+                source = hf_hub_download(
+                    repo_id=CHATTERBOX_REPO_ID, filename=name, local_dir=store
+                )
+            try:
+                os.link(source, target)
+            except OSError:
+                try:
+                    os.makedirs(pack_dir, exist_ok=True)
+                except OSError:
+                    pass
+                shutil.copyfile(source, target)
+
+    @staticmethod
     def _ensure_entry_point_dir(
         pack_dir: str,
         repo_id: str,
         required: tuple[str, ...],
         model_name: str,
         client_id: Optional[str] = None,
-        companion_files: Optional[dict[str, str]] = None,
     ) -> None:
         """Fetch ``repo_id`` into ``pack_dir`` when a required file is absent.
 
-        The shared prologue for the multilingual and Turbo entry points. Both
-        are ordinary Hugging Face snapshots with their own file layouts, so the
-        completeness test is ``required`` -- not
+        The shared prologue for the multilingual, Turbo and Flash entry
+        points. All are ordinary Hugging Face snapshots with their own file
+        layouts, so the completeness test is ``required`` -- not
         :meth:`is_pack_complete`, which is written for the *classic* layout and
         would therefore re-download a perfectly good multilingual pack on every
         run.
@@ -756,10 +861,12 @@ class ChatterboxLoader:
         drops under ``models/tts/chatterbox``) satisfy the same test and take the
         same path: there is no special case for them anywhere in this class.
 
-        ``companion_files`` maps a required file that lives in a *different*
-        repository to that repository's id -- the Single Language Packs carry
-        no ``ve.pt`` of their own; it is fetched per-file from the shared
-        Chatterbox repo (a ~17 MB voice encoder, no download manager needed).
+        Downloads are narrowed by the registry entry's ``files`` list minus
+        the shared assets (``SHARED_ASSET_FILES``) -- those are byte-identical
+        across the family and are materialized afterwards by
+        :meth:`_ensure_shared_assets`, hardlinked out of the ``_shared``
+        store. An entry-less (community) pack falls back to a whole-repo
+        fetch: its layout is unknown.
         """
         if os.path.isdir(pack_dir) and not ChatterboxLoader._missing_checkpoint_files(
             pack_dir, required
@@ -767,29 +874,29 @@ class ChatterboxLoader:
             return
         if not repo_id:
             return
+        entry = ChatterboxLoader._registry_entry(model_name) or {}
+        unique = set(entry.get("unique_files") or ())
+        shared_needed = [
+            name for name in required if name in SHARED_ASSET_FILES and name not in unique
+        ]
+        patterns = None
+        if entry.get("files"):
+            patterns = [
+                name
+                for name in entry["files"]
+                if name not in SHARED_ASSET_FILES or name in unique
+            ]
         logging.info(
             "[Chatterbox TTS] Fetching '%s' from %s into '%s'...",
             model_name,
             repo_id,
             pack_dir,
         )
-        ChatterboxLoader.download_pack(model_name, repo_id, pack_dir, client_id)
-        if companion_files:
-            from huggingface_hub import hf_hub_download
+        ChatterboxLoader.download_pack(
+            model_name, repo_id, pack_dir, client_id, allow_patterns=patterns
+        )
+        ChatterboxLoader._ensure_shared_assets(pack_dir, shared_needed)
 
-            for filename, companion_repo in companion_files.items():
-                if not companion_repo or os.path.isfile(os.path.join(pack_dir, filename)):
-                    continue
-                logging.info(
-                    "[Chatterbox TTS] Fetching companion file '%s' from %s...",
-                    filename,
-                    companion_repo,
-                )
-                hf_hub_download(
-                    repo_id=companion_repo, filename=filename, local_dir=pack_dir
-                )
-
-    @staticmethod
     @staticmethod
     def _registry_entry(model_name: str) -> Optional[dict]:
         """The registry config for ``model_name``, official or local, or ``None``."""
@@ -835,10 +942,10 @@ class ChatterboxLoader:
         """The s3gen decoder filename a multilingual pack actually holds.
 
         The directory wins (a local community pack is on disk when this is
-        called with a ``model_path``); a registry entry whose ``files`` list
-        names the v3 decoder follows; the shared repo's canonical
-        ``s3gen.pt`` is the default, so the missing-file message keeps
-        naming it.
+        called with a ``model_path``), safetensors before any legacy ``.pt``
+        twin; a registry entry whose ``files`` list names a decoder follows;
+        the Single Language Packs' ``s3gen_v3.safetensors`` is the default,
+        so the missing-file message keeps naming it.
         """
         if os.path.isdir(pack_dir):
             for name in MTL_S3GEN_CHECKPOINTS:
@@ -881,7 +988,7 @@ class ChatterboxLoader:
         _refuse_wrong_variant_pack(pack_dir, model_name, entry_point="multilingual")
         t3_model = ChatterboxLoader._resolve_mtl_t3_file(pack_dir, model_name, t3_model)
         s3gen_file = ChatterboxLoader._resolve_mtl_s3gen_file(pack_dir, model_name)
-        required = (*MTL_CHECKPOINT_FILES, s3gen_file, t3_model)
+        required = (*MTL_CHECKPOINT_FILES, "ve.safetensors", s3gen_file, t3_model)
 
         from .constants import CHATTERBOX_REPO_ID
 
@@ -892,7 +999,6 @@ class ChatterboxLoader:
             required,
             model_name,
             client_id,
-            companion_files=entry.get("companion_files"),
         )
 
         missing = ChatterboxLoader._missing_checkpoint_files(pack_dir, required)

@@ -733,8 +733,13 @@ class TestLoaderSurface:
         empty.mkdir()
         attempts: list[tuple] = []
 
-        def record_download_pack(model_name, repo_id, local_dir, client_id=None):
+        patterns_seen: list = []
+
+        def record_download_pack(
+            model_name, repo_id, local_dir, client_id=None, allow_patterns=None
+        ):
             attempts.append((model_name, repo_id, local_dir, client_id))
+            patterns_seen.append(allow_patterns)
 
         monkeypatch.setattr(
             ChatterboxLoader, "download_pack", staticmethod(record_download_pack)
@@ -752,6 +757,10 @@ class TestLoaderSurface:
             "load_model must attempt a download before giving up; the failure "
             "message is only truthful if it did"
         )
+        # The classic fetch is filtered: shared weights come from the store.
+        assert patterns_seen == [
+            ["t3_cfg.safetensors", "tokenizer.json", "conds.pt"]
+        ]
 
     def test_download_pack_is_skipped_for_a_complete_pack(self, pack_dir) -> None:
         called: list[tuple] = []

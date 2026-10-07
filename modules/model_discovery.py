@@ -87,13 +87,18 @@ def _scan(root: str) -> List[Tuple[str, str]]:
     Uses ``os.scandir`` rather than ``os.listdir`` so the directory is read
     once and each entry's type comes from the readdir data already in hand.
     Every subdirectory counts as a pack: a partially downloaded one must stay
-    selectable so the download can finish it.
+    selectable so the download can finish it. The reserved shared-weight
+    store (``SHARED_ASSET_DIR_NAME``) is not a pack and never appears.
     """
+    from .model_info import SHARED_ASSET_DIR_NAME
+
     packs: List[Tuple[str, str]] = []
     try:
         with os.scandir(root) as entries:
             for entry in entries:
                 try:
+                    if entry.name == SHARED_ASSET_DIR_NAME:
+                        continue
                     if entry.is_dir():
                         packs.append((entry.name, entry.path))
                 except OSError as exc:

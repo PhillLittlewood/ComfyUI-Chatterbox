@@ -230,13 +230,40 @@ downloaded:
 - **Single Language Packs** (the six `ResembleAI/Chatterbox-Multilingual-<lang>`
   finetunes) load through the **Chatterbox Multilingual TTS 🌍** node. Each
   ships its own per-language t3 checkpoint (`t3_zh_cmn`, `t3_es_mx_latam`,
-  `t3_es_es`, `t3_pt_br`, `t3_pt_pt`, `t3_hi`) plus the multilingual s3gen and
-  grapheme tokenizer, so the pack folder is self-describing — the pack decides
-  what loads, not the variant widget. Only zh-cmn ships a built-in voice
-  (`conds.pt`); the other five fetch the shared `ve.pt` from
-  `ResembleAI/chatterbox` on first load and **require a reference audio clip**.
-  The `language` widget is ignored — every pack speaks its own language.
+  `t3_es_es`, `t3_pt_br`, `t3_pt_pt`, `t3_hi`); the decoder, grapheme
+  tokenizer and voice encoder are byte-identical across all six and come from
+  the shared store instead of being downloaded six times (see below). Only
+  zh-cmn ships a built-in voice (`conds.pt`); the other five **require a
+  reference audio clip**. The `language` widget is ignored — every pack
+  speaks its own language.
 - Classic packs (`t3_cfg.safetensors`) are the voice-conversion packs too.
+
+#### How packs share files
+
+Four files are byte-identical across every repo that ships them (verified by
+sha256): `ve.safetensors`, `s3gen.safetensors`, `s3gen_v3.safetensors` and the
+grapheme tokenizer `grapheme_mtl_merged_expanded_v1.json`. The node therefore
+fetches each of them at most once, into a reserved store at
+
+```text
+ComfyUI/models/tts/chatterbox/_shared/
+```
+
+and hardlinks it into every pack that needs it — a hardlink costs no extra
+disk, and each pack folder stays self-contained. When one of these files
+already exists anywhere on disk (a full `chatterbox/` download from an older
+version counts), it is linked from there and nothing is fetched at all.
+
+A pack download consequently carries only its unique files: an extra Single
+Language Pack is its ~2 GB t3 checkpoint and nothing else. The one exception
+is Flash, whose `s3gen.safetensors` is a different decoder despite the shared
+name — it always downloads its own.
+
+Downloads never fetch the legacy `.pt` twins (`s3gen.pt`, `s3gen_v3.pt`,
+`t3_cfg.pt`, `ve.pt`): they hold the same weights as their `.safetensors`
+siblings and nothing loads them. Existing folders that carry the twins keep
+working — you can delete those four files from a full `chatterbox/` download
+to reclaim ~3 GB.
 
 Folders from earlier builds named like a pack plus a variant
 (`chatterbox-nano__turbo`) are ordinary packs as far as the scanner is

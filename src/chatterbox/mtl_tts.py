@@ -37,26 +37,48 @@ MULTILINGUAL_T3_MODELS = {
 }
 
 # PATCHED (src/PATCHES.md P-027): the file set a multilingual pack has to hold
-# *besides* the version-selected T3 checkpoint, and the up-front check for it.
-# The T3 filename is version-dependent and the s3gen filename is
-# pack-dependent (P-036); both are resolved by the caller, so neither is in
-# this tuple.
+# *besides* the resolved T3, voice-encoder and s3gen checkpoints, and the
+# up-front check for it. The other three filenames are pack-dependent (P-036)
+# and resolved by the caller, so none of them is in this tuple.
 REQUIRED_CHECKPOINT_FILES = (
-    "ve.pt",
     "grapheme_mtl_merged_expanded_v1.json",
 )
 
 
 # PATCHED (src/PATCHES.md P-036): the Single Language Pack finetunes ship
-# their S3Gen decoder as ``s3gen_v3.pt``; the shared multilingual repo ships
-# ``s3gen.pt``. Resolve whichever the pack actually holds -- ``s3gen.pt``
-# stays the fallback so the missing-file message names the canonical file
-# when neither exists.
+# their S3Gen decoder as ``s3gen_v3.safetensors`` (plus a legacy ``.pt``
+# twin), while the shared multilingual repo ships ``s3gen.safetensors``.
+# Resolve whichever serialization the pack actually holds, preferring
+# safetensors (no pickle, what every other entry point loads); the canonical
+# ``s3gen.safetensors`` stays the fallback so the missing-file message names
+# it when nothing exists.
 def _resolve_s3gen_checkpoint(ckpt_dir):
-    for name in ("s3gen.pt", "s3gen_v3.pt"):
+    for name in (
+        "s3gen_v3.safetensors",
+        "s3gen_v3.pt",
+        "s3gen.safetensors",
+        "s3gen.pt",
+    ):
         if (Path(ckpt_dir) / name).is_file():
             return name
-    return "s3gen.pt"
+    return "s3gen.safetensors"
+
+
+def _resolve_ve_checkpoint(ckpt_dir):
+    """The voice-encoder file the pack holds, safetensors preferred (P-036)."""
+    for name in ("ve.safetensors", "ve.pt"):
+        if (Path(ckpt_dir) / name).is_file():
+            return name
+    return "ve.safetensors"
+
+
+def _load_checkpoint(path, map_location=None):
+    """Read a state dict from either serialization, by extension (P-036)."""
+    if str(path).endswith(".safetensors"):
+        from safetensors.torch import load_file
+
+        return load_file(str(path))
+    return torch.load(path, map_location=map_location, weights_only=True)
 
 
 def _require_checkpoint_files(ckpt_dir, required):
@@ -272,10 +294,15 @@ class ChatterboxMultilingualTTS:
 
         # PATCHED (src/PATCHES.md P-027): an incomplete directory is refused
         # here, by name, instead of at the first `torch.load`.
-        # PATCHED (src/PATCHES.md P-036): the s3gen filename follows the pack.
+        # PATCHED (src/PATCHES.md P-036): the s3gen and ve filenames follow
+        # the pack (safetensors preferred); the resolved names join the
+        # required set so the missing-file message names what is actually
+        # expected here.
+        ve_checkpoint = _resolve_ve_checkpoint(ckpt_dir)
         s3gen_checkpoint = _resolve_s3gen_checkpoint(ckpt_dir)
         _require_checkpoint_files(
-            ckpt_dir, (*REQUIRED_CHECKPOINT_FILES, s3gen_checkpoint, t3_model)
+            ckpt_dir,
+            (*REQUIRED_CHECKPOINT_FILES, ve_checkpoint, s3gen_checkpoint, t3_model),
         )
 
         # Always load to CPU first for non-CUDA devices to handle CUDA-saved models
@@ -289,8 +316,11 @@ class ChatterboxMultilingualTTS:
             map_location = None
 
         ve = VoiceEncoder()
+        # PATCHED (src/PATCHES.md P-036): resolve the voice-encoder file the
+        # pack actually holds (safetensors preferred) instead of hard-coding
+        # the legacy ``ve.pt`` name.
         ve.load_state_dict(
-            torch.load(ckpt_dir / "ve.pt", map_location=map_location, weights_only=True)
+            _load_checkpoint(ckpt_dir / _resolve_ve_checkpoint(ckpt_dir), map_location)
         )
         ve.to(device).eval()
 
@@ -308,7 +338,7 @@ class ChatterboxMultilingualTTS:
         # recomputed in __init__, never learned. Load non-strict like the
         # classic path in tts.py does; a strict load refuses every SLP pack.
         s3gen.load_state_dict(
-            torch.load(ckpt_dir / s3gen_checkpoint, map_location=map_location, weights_only=True),
+            _load_checkpoint(ckpt_dir / s3gen_checkpoint, map_location),
             strict=False,
         )
         s3gen.to(device).eval()
@@ -343,7 +373,10 @@ class ChatterboxMultilingualTTS:
                 repo_id=REPO_ID,
                 repo_type="model",
                 revision="main",
-                allow_patterns=["ve.pt", t3_model, "s3gen.pt", "grapheme_mtl_merged_expanded_v1.json", "conds.pt", "Cangjie5_TC.json"],
+                # PATCHED (src/PATCHES.md P-036): fetch the safetensors
+                # serializations only -- the repo's ``.pt`` twins are the
+                # same weights and never loaded.
+                allow_patterns=["ve.safetensors", t3_model, "s3gen.safetensors", "grapheme_mtl_merged_expanded_v1.json", "conds.pt", "Cangjie5_TC.json"],
                 token=os.getenv("HF_TOKEN"),
             )
         )
