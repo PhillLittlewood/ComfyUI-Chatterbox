@@ -38,13 +38,25 @@ MULTILINGUAL_T3_MODELS = {
 
 # PATCHED (src/PATCHES.md P-027): the file set a multilingual pack has to hold
 # *besides* the version-selected T3 checkpoint, and the up-front check for it.
-# The T3 filename is version-dependent and is checked by the caller, so it is
-# deliberately not in this tuple.
+# The T3 filename is version-dependent and the s3gen filename is
+# pack-dependent (P-036); both are resolved by the caller, so neither is in
+# this tuple.
 REQUIRED_CHECKPOINT_FILES = (
     "ve.pt",
-    "s3gen.pt",
     "grapheme_mtl_merged_expanded_v1.json",
 )
+
+
+# PATCHED (src/PATCHES.md P-036): the Single Language Pack finetunes ship
+# their S3Gen decoder as ``s3gen_v3.pt``; the shared multilingual repo ships
+# ``s3gen.pt``. Resolve whichever the pack actually holds -- ``s3gen.pt``
+# stays the fallback so the missing-file message names the canonical file
+# when neither exists.
+def _resolve_s3gen_checkpoint(ckpt_dir):
+    for name in ("s3gen.pt", "s3gen_v3.pt"):
+        if (Path(ckpt_dir) / name).is_file():
+            return name
+    return "s3gen.pt"
 
 
 def _require_checkpoint_files(ckpt_dir, required):
@@ -260,7 +272,11 @@ class ChatterboxMultilingualTTS:
 
         # PATCHED (src/PATCHES.md P-027): an incomplete directory is refused
         # here, by name, instead of at the first `torch.load`.
-        _require_checkpoint_files(ckpt_dir, (*REQUIRED_CHECKPOINT_FILES, t3_model))
+        # PATCHED (src/PATCHES.md P-036): the s3gen filename follows the pack.
+        s3gen_checkpoint = _resolve_s3gen_checkpoint(ckpt_dir)
+        _require_checkpoint_files(
+            ckpt_dir, (*REQUIRED_CHECKPOINT_FILES, s3gen_checkpoint, t3_model)
+        )
 
         # Always load to CPU first for non-CUDA devices to handle CUDA-saved models
         # PATCHED (src/PATCHES.md P-025): same `str(device)` comparison as P-003
@@ -286,8 +302,14 @@ class ChatterboxMultilingualTTS:
         t3.to(device).eval()
 
         s3gen = S3Gen()
+        # PATCHED (src/PATCHES.md P-036): the Single Language Pack s3gen
+        # checkpoints predate the `tokenizer._mel_filters`/`tokenizer.window`
+        # buffers (see S3Token2Wav.ignore_state_dict_missing) -- both are
+        # recomputed in __init__, never learned. Load non-strict like the
+        # classic path in tts.py does; a strict load refuses every SLP pack.
         s3gen.load_state_dict(
-            torch.load(ckpt_dir / "s3gen.pt", map_location=map_location, weights_only=True)
+            torch.load(ckpt_dir / s3gen_checkpoint, map_location=map_location, weights_only=True),
+            strict=False,
         )
         s3gen.to(device).eval()
 

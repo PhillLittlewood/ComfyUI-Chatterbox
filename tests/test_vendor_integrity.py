@@ -74,7 +74,7 @@ EXPECTED_FILE_HASHES: dict[str, str] = {
     "chatterbox/models/voice_encoder/config.py": "e64be6d97b000392427a0b243dd41741888d767b96a79961a63039ffd1b2b95c",
     "chatterbox/models/voice_encoder/melspec.py": "d3d61bf55a5a3aead1a436c3d99fc0ec822c3bced6fc1b932e83605d3775bc9f",
     "chatterbox/models/voice_encoder/voice_encoder.py": "9583825f6b7b5c9cf7ec93c65172fdcb1a0622d8196db65b6a966e02e4f09fc9",
-    "chatterbox/mtl_tts.py": "31f882a5333d66a0f0246023835b1928b1d347ca1b3f5997676554465c23a12f",
+    "chatterbox/mtl_tts.py": "02fc4272c1e233b64381abd0ef96d53c9a370dd3b636420c38a79799a2125aac",
     "chatterbox/tts.py": "d05eaa7eda086b3c72c353a230d9404621e0482c560c87599b04420a0c9fd83b",
     "chatterbox/tts_turbo.py": "2a47a2f160de6389cc42933fe0bc46e37e0362925c0ea6b7c49a51fceba64666",
     "chatterbox/vc.py": "8a8ac8e30e05ffc3847f04231ff034f72fd9058e600f12f199616b4dd32e2f4d",

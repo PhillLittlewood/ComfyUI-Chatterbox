@@ -27,10 +27,16 @@ import pytest
 from ComfyUI_Chatterbox.nodes import ChatterboxTTSNode, ChatterboxVCNode
 
 from .conftest_helpers import (
+    empty_pack_root,
     load_frozen_snapshot,
     schema_signatures,
     snapshot_signatures,
 )
+
+
+@pytest.fixture(autouse=True)
+def _pin_pack_discovery_to_an_empty_root(empty_pack_root):
+    """The schema snapshots record an empty models dir; keep it that way."""
 
 # The node ids are frozen too: they are what a saved graph names.
 TTS_NODE_ID = "ChatterboxTTS"
@@ -50,6 +56,10 @@ APPENDED_WIDGETS: dict[str, tuple[str, ...]] = {
         # TTS node (2026-10-06). Classic packs ignore both.
         "top_k",
         "normalize_loudness",
+        # Flash controls, appended with the Single Language Pack round
+        # (2026-10-07). Flash packs ignore the Turbo ones and vice versa.
+        "num_steps",
+        "cfg_scale",
     ),
     VC_NODE_ID: (
         "device",

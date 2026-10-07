@@ -24,6 +24,7 @@ from ComfyUI_Chatterbox.modules.generation import (
     load_chatterbox_model,
     variant_cache_stem,
 )
+from ComfyUI_Chatterbox.modules.loader import ChatterboxLoader
 from ComfyUI_Chatterbox.modules.model_registry import evict_if_changed
 
 
@@ -504,3 +505,124 @@ class TestFlashRoutingAndDispatch:
 
         with pytest.raises(ValueError, match="reference"):
             generate_audio(ChatterboxFlashTTS(), "hello flash")
+
+
+class TestFlashCarriesItsSamplerControls:
+    """num_steps / cfg_scale reach the flash generate; other families ignore them."""
+
+    def test_flash_dispatch_forwards_num_steps_and_cfg_scale(self) -> None:
+        class ChatterboxFlashTTS:
+            def __init__(self) -> None:
+                self.calls: list[dict] = []
+                self.cond_calls: list[dict] = []
+
+            def prepare_conditionals(self, path, exaggeration=0.5) -> None:
+                self.cond_calls.append({"path": path, "exaggeration": exaggeration})
+
+            def generate(self, *args, **kwargs) -> torch.Tensor:
+                self.calls.append({"args": list(args), **kwargs})
+                return torch.zeros((1, 24000))
+
+        model = ChatterboxFlashTTS()
+        generate_audio(
+            model,
+            "hello flash",
+            audio_prompt={"waveform": torch.zeros(1, 24000), "sample_rate": 24000},
+            num_steps=4,
+            cfg_scale=1.5,
+        )
+        assert model.calls[0]["num_steps"] == 4
+        assert model.calls[0]["cfg_scale"] == 1.5
+
+
+class TestSingleLanguagePackRouting:
+    """The six Chatterbox-Multilingual finetunes load through the MTL path."""
+
+    def _write_slp(self, tmp_path, t3_name="t3_zh_cmn.safetensors") -> str:
+        pack = tmp_path / "chatterbox-multilingual-zh-cmn"
+        pack.mkdir()
+        for name in (
+            t3_name,
+            "s3gen_v3.pt",
+            "grapheme_mtl_merged_expanded_v1.json",
+            "ve.pt",
+        ):
+            (pack / name).write_bytes(b"\x00" * 4)
+        return str(pack)
+
+    def test_the_registered_t3_checkpoint_wins(self, tmp_path) -> None:
+        pack = self._write_slp(tmp_path)
+        resolved = ChatterboxLoader._resolve_mtl_t3_file(
+            pack, "chatterbox-multilingual-zh-cmn", "t3_mtl23ls_v3.safetensors"
+        )
+        assert resolved == "t3_zh_cmn.safetensors"
+
+    def test_a_community_slp_dir_resolves_its_single_language_t3(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        pack = self._write_slp(tmp_path, t3_name="t3_xx_yy.safetensors")
+        monkeypatch.setitem(
+            gen.model_info.MODEL_CONFIGS,
+            "chatterbox-multilingual-zh-cmn",
+            {"files": []},
+        )
+        resolved = ChatterboxLoader._resolve_mtl_t3_file(
+            str(pack), "chatterbox-multilingual-zh-cmn", "t3_mtl23ls_v3.safetensors"
+        )
+        assert resolved == "t3_xx_yy.safetensors"
+
+    def test_the_version_combo_wins_when_the_pack_carries_it(self, tmp_path) -> None:
+        pack = tmp_path / "mtl-plain"
+        pack.mkdir()
+        for name in (
+            "t3_mtl23ls_v3.safetensors",
+            "ve.pt",
+            "s3gen.pt",
+            "grapheme_mtl_merged_expanded_v1.json",
+        ):
+            (pack / name).write_bytes(b"\x00" * 4)
+        assert (
+            ChatterboxLoader._resolve_mtl_t3_file(
+                str(pack), "some-community-pack", "t3_mtl23ls_v3.safetensors"
+            )
+            == "t3_mtl23ls_v3.safetensors"
+        )
+
+    def test_the_s3gen_decoder_resolves_per_pack(self, tmp_path) -> None:
+        pack = tmp_path / "slp"
+        pack.mkdir()
+        (pack / "s3gen_v3.pt").write_bytes(b"\x00" * 4)
+        assert (
+            ChatterboxLoader._resolve_mtl_s3gen_file(str(pack), "whatever")
+            == "s3gen_v3.pt"
+        )
+        # No dir: the official SLP entries name the v3 decoder in their files.
+        assert (
+            ChatterboxLoader._resolve_mtl_s3gen_file(
+                str(tmp_path / "missing"), "chatterbox-multilingual-zh-cmn"
+            )
+            == "s3gen_v3.pt"
+        )
+        assert (
+            ChatterboxLoader._resolve_mtl_s3gen_file(
+                str(tmp_path / "missing"), "unknown-local-pack"
+            )
+            == "s3gen.pt"
+        )
+
+    def test_a_slp_dir_sniffs_as_multilingual(self, tmp_path) -> None:
+        from ComfyUI_Chatterbox.modules.model_info import infer_pack_architecture
+
+        assert (
+            infer_pack_architecture(self._write_slp(tmp_path))
+            == "chatterbox_multilingual"
+        )
+
+
+class TestMtlWithoutBuiltinVoice:
+    def test_a_pack_without_conds_names_the_reference_clip(self) -> None:
+        class MtlPack:
+            conds = None
+
+        with pytest.raises(ValueError, match="reference"):
+            gen.generate_mtl_audio(MtlPack(), "hola", "es")

@@ -38,10 +38,16 @@ from ComfyUI_Chatterbox.modules.dtype_utils import get_dtype_options
 from ComfyUI_Chatterbox.nodes import ChatterboxTTSNode, ChatterboxVCNode
 
 from .conftest_helpers import (
+    empty_pack_root,
     load_frozen_snapshot,
     schema_signatures,
     snapshot_signatures,
 )
+
+
+@pytest.fixture(autouse=True)
+def _pin_pack_discovery_to_an_empty_root(empty_pack_root):
+    """The frozen prefix records an empty models dir; keep it that way."""
 
 TTS_NODE_ID = "ChatterboxTTS"
 VC_NODE_ID = "ChatterboxVC"
@@ -65,6 +71,9 @@ APPENDED_WIDGET_ORDER: dict[str, tuple[str, ...]] = {
         "attention_mode",
         "top_k",  # Turbo-family controls (Turbo node merged into TTS node).
         "normalize_loudness",
+        # Flash controls (Single Language Pack round, 2026-10-07).
+        "num_steps",
+        "cfg_scale",
     ),
     VC_NODE_ID: (
         "device",

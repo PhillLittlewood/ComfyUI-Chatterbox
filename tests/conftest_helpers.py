@@ -19,6 +19,8 @@ import os
 import sys
 from typing import Iterable
 
+import pytest
+
 from conftest import PKG_ALIAS
 
 __all__ = [
@@ -30,6 +32,7 @@ __all__ = [
     "signature",
     "schema_signatures",
     "snapshot_signatures",
+    "empty_pack_root",
 ]
 
 SRC_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
@@ -195,3 +198,21 @@ def snapshot_signatures(snapshot: dict, node_id: str, section: str) -> tuple[tup
     return tuple(
         signature(entry["name"], entry["type"], entry) for entry in entries
     )
+
+
+@pytest.fixture()
+def empty_pack_root(tmp_path, monkeypatch):
+    """Pin pack discovery to an empty models root for one test.
+
+    The frozen snapshot and the shipped example workflows were recorded
+    against an empty ``models/tts/chatterbox`` -- with nothing on disk the
+    pack combo offers exactly the default pack. Whatever the machine running
+    the tests has downloaded since (an SLP pack, say) must not move the
+    widget contract, so the schema/workflow tests read discovery through this
+    fixture instead of the real models dir.
+    """
+    from ComfyUI_Chatterbox.modules import model_discovery
+
+    root = tmp_path / "models" / "tts" / "chatterbox"
+    monkeypatch.setattr(model_discovery, "get_models_root", lambda: str(root))
+    return root

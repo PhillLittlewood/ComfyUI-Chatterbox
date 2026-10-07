@@ -64,6 +64,11 @@ __all__ = [
 # Sample rates are not a guess: every Chatterbox model synthesises through
 # S3Gen at 24 kHz (``src/chatterbox/models/s3gen/const.py::S3GEN_SR``).
 
+# The multilingual family (and the Single Language Pack finetunes) ship the
+# grapheme map the vendored ``MTLTokenizer`` loads instead of a fast tokenizer.
+MTL_TOKENIZER_FILE = "grapheme_mtl_merged_expanded_v1.json"
+
+
 MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
     # The pack a saved workflow names by default. Monolingual English, voice
     # cloning, the source of every other official pack.
@@ -100,6 +105,77 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "size_gb": 2.7,
         "files": ["t3_mtl23ls_v3.safetensors", "ve.safetensors", "s3gen.safetensors", "tokenizer.json", "conds.pt"],
         "description": "23-language multilingual T3, newer checkpoint: better similarity, fewer hallucinations.",
+    },
+    # The Single Language Pack: six dedicated finetunes of the multilingual
+    # V3 family, one per priority language (2026-06 release). Each ships its
+    # own per-language t3 checkpoint ("t3_checkpoint") and s3gen_v3.pt; only
+    # zh-cmn bundles ve.pt and conds.pt -- the rest take ve.pt from the shared
+    # repo at load time ("companion_files") and have NO built-in voice, so a
+    # reference clip is required.
+    "chatterbox-multilingual-zh-cmn": {
+        "repo_id": "ResembleAI/Chatterbox-Multilingual-zh-cmn",
+        "architecture": "chatterbox_multilingual",
+        "sample_rate": 24000,
+        "size_gb": 2.8,
+        "files": ["t3_zh_cmn.safetensors", "s3gen_v3.pt", MTL_TOKENIZER_FILE, "ve.pt", "conds.pt"],
+        "t3_checkpoint": "t3_zh_cmn.safetensors",
+        "language": "zh",
+        "description": "Single Language Pack: Chinese (zh). Ships a built-in voice.",
+    },
+    "chatterbox-multilingual-es-mx-latam": {
+        "repo_id": "ResembleAI/Chatterbox-Multilingual-es-mx-latam",
+        "architecture": "chatterbox_multilingual",
+        "sample_rate": 24000,
+        "size_gb": 2.6,
+        "files": ["t3_es_mx_latam.safetensors", "s3gen_v3.pt", MTL_TOKENIZER_FILE],
+        "t3_checkpoint": "t3_es_mx_latam.safetensors",
+        "language": "es",
+        "companion_files": {"ve.pt": CHATTERBOX_REPO_ID},
+        "description": "Single Language Pack: Latin-American Spanish (es). Needs a reference clip.",
+    },
+    "chatterbox-multilingual-es-es": {
+        "repo_id": "ResembleAI/Chatterbox-Multilingual-es-es",
+        "architecture": "chatterbox_multilingual",
+        "sample_rate": 24000,
+        "size_gb": 2.6,
+        "files": ["t3_es_es.safetensors", "s3gen_v3.pt", MTL_TOKENIZER_FILE],
+        "t3_checkpoint": "t3_es_es.safetensors",
+        "language": "es",
+        "companion_files": {"ve.pt": CHATTERBOX_REPO_ID},
+        "description": "Single Language Pack: Spain Spanish (es). Needs a reference clip.",
+    },
+    "chatterbox-multilingual-pt-br": {
+        "repo_id": "ResembleAI/Chatterbox-Multilingual-pt-br",
+        "architecture": "chatterbox_multilingual",
+        "sample_rate": 24000,
+        "size_gb": 2.6,
+        "files": ["t3_pt_br.safetensors", "s3gen_v3.pt", MTL_TOKENIZER_FILE],
+        "t3_checkpoint": "t3_pt_br.safetensors",
+        "language": "pt",
+        "companion_files": {"ve.pt": CHATTERBOX_REPO_ID},
+        "description": "Single Language Pack: Brazilian Portuguese (pt). Needs a reference clip.",
+    },
+    "chatterbox-multilingual-pt-pt": {
+        "repo_id": "ResembleAI/Chatterbox-Multilingual-pt-pt",
+        "architecture": "chatterbox_multilingual",
+        "sample_rate": 24000,
+        "size_gb": 2.6,
+        "files": ["t3_pt_pt.safetensors", "s3gen_v3.pt", MTL_TOKENIZER_FILE],
+        "t3_checkpoint": "t3_pt_pt.safetensors",
+        "language": "pt",
+        "companion_files": {"ve.pt": CHATTERBOX_REPO_ID},
+        "description": "Single Language Pack: Portugal Portuguese (pt). Needs a reference clip.",
+    },
+    "chatterbox-multilingual-hi": {
+        "repo_id": "ResembleAI/Chatterbox-Multilingual-hi",
+        "architecture": "chatterbox_multilingual",
+        "sample_rate": 24000,
+        "size_gb": 2.6,
+        "files": ["t3_hi.safetensors", "s3gen_v3.pt", MTL_TOKENIZER_FILE],
+        "t3_checkpoint": "t3_hi.safetensors",
+        "language": "hi",
+        "companion_files": {"ve.pt": CHATTERBOX_REPO_ID},
+        "description": "Single Language Pack: Hindi (hi). Needs a reference clip.",
     },
     # The Turbo family, in ONE folder. Turbo is the family's name upstream
     # (ResembleAI/chatterbox-turbo); Nano is its smaller member
@@ -184,10 +260,13 @@ CHATTERBOX_WEIGHT_FILES = (
     "t3_flash.safetensors",
     "ve.safetensors",
     "s3gen.safetensors",
+    "s3gen_v3.pt",  # Single Language Pack decoder (P-036)
+    "s3gen.pt",
 )
 
 # Every Chatterbox entry point needs a tokenizer to build its T3 conditions.
 CHATTERBOX_TOKENIZER_FILE = "tokenizer.json"
+
 
 
 # ── Feature flags ────────────────────────────────────────────────────
@@ -277,6 +356,12 @@ def _infer_architecture(entries: List[str]) -> Optional[str]:
     if "t3_turbo_v1.safetensors" in entries:
         return "chatterbox_turbo"
     if "t3_mtl23ls_v2.safetensors" in entries or "t3_mtl23ls_v3.safetensors" in entries:
+        return "chatterbox_multilingual"
+    # Single Language Pack finetunes (and community refinetunes of them) keep
+    # the multilingual tokenizer and s3gen but rename the t3 blob per language
+    # (t3_zh_cmn.safetensors, t3_es_mx_latam.safetensors, ...). The grapheme
+    # map is the family marker no other architecture carries.
+    if MTL_TOKENIZER_FILE in entries:
         return "chatterbox_multilingual"
     if "t3_flash.safetensors" in entries:
         return "chatterbox_flash"
@@ -386,14 +471,19 @@ def is_chatterbox_model_dir(path: str) -> bool:
 
 
 def _has_usable_tokenizer(entries: set) -> bool:
-    """``tokenizer.json``, or the HF fast-tokenizer pair Nano ships instead.
+    """``tokenizer.json``, the HF fast pair Nano ships, or the MTL grapheme map.
 
     The Nano repo has no ``tokenizer.json``: its tokenizer is the GPT2-style
     HF layout (``vocab.json`` + ``merges.txt``), which ``AutoTokenizer`` reads
     just as well. Demanding ``tokenizer.json`` outright made every Nano pack
-    fail the sniff before any loader could look at it.
+    fail the sniff before any loader could look at it. The multilingual family
+    (and the Single Language Pack finetunes) ship
+    ``grapheme_mtl_merged_expanded_v1.json`` instead, which the vendored
+    ``MTLTokenizer`` loads.
     """
     if CHATTERBOX_TOKENIZER_FILE in entries:
+        return True
+    if MTL_TOKENIZER_FILE in entries:
         return True
     return {"vocab.json", "merges.txt"}.issubset(entries)
 

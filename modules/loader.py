@@ -37,10 +37,11 @@ from typing import Any, Optional
 
 import torch
 
-from .constants import DEFAULT_MODEL_PACK_NAME
+from .constants import DEFAULT_MODEL_PACK_NAME, MTL_T3_MODELS
 from .model_discovery import get_model_pack_path
 from .model_info import (
     AVAILABLE_CHATTERBOX_MODELS,
+    CHATTERBOX_WEIGHT_FILES,
     MODEL_CONFIGS,
     is_chatterbox_model_dir,
 )
@@ -72,12 +73,18 @@ _WEIGHT_ATTRIBUTES = ("t3", "s3gen", "ve")
 # against these lists rather than against
 # :data:`modules.model_info.CHATTERBOX_WEIGHT_FILES`, which would re-download a
 # perfectly good checkpoint on every run. The version- or variant-selected T3
-# checkpoint is appended by the caller, because its name is not fixed.
+# checkpoint is appended by the caller, because its name is not fixed -- and
+# so is the s3gen decoder's: the Single Language Packs ship ``s3gen_v3.pt``
+# (P-036), the shared repo ships ``s3gen.pt``.
 MTL_CHECKPOINT_FILES: tuple[str, ...] = (
     "ve.pt",
-    "s3gen.pt",
     "grapheme_mtl_merged_expanded_v1.json",
 )
+
+#: The s3gen filenames a multilingual pack may carry, in resolution order:
+#: the shared repo's canonical name first, the Single Language Packs' v3
+#: retrain second.
+MTL_S3GEN_CHECKPOINTS: tuple[str, ...] = ("s3gen.pt", "s3gen_v3.pt")
 
 #: Turbo and Nano share one layout, and so share one completeness list. The
 #: tokenizer is checked separately: Turbo ships ``tokenizer.json``, Nano ships
@@ -734,6 +741,7 @@ class ChatterboxLoader:
         required: tuple[str, ...],
         model_name: str,
         client_id: Optional[str] = None,
+        companion_files: Optional[dict[str, str]] = None,
     ) -> None:
         """Fetch ``repo_id`` into ``pack_dir`` when a required file is absent.
 
@@ -747,6 +755,11 @@ class ChatterboxLoader:
         Community finetunes (Viterbox, Egyptian Arabic, anything else a user
         drops under ``models/tts/chatterbox``) satisfy the same test and take the
         same path: there is no special case for them anywhere in this class.
+
+        ``companion_files`` maps a required file that lives in a *different*
+        repository to that repository's id -- the Single Language Packs carry
+        no ``ve.pt`` of their own; it is fetched per-file from the shared
+        Chatterbox repo (a ~17 MB voice encoder, no download manager needed).
         """
         if os.path.isdir(pack_dir) and not ChatterboxLoader._missing_checkpoint_files(
             pack_dir, required
@@ -761,8 +774,83 @@ class ChatterboxLoader:
             pack_dir,
         )
         ChatterboxLoader.download_pack(model_name, repo_id, pack_dir, client_id)
+        if companion_files:
+            from huggingface_hub import hf_hub_download
+
+            for filename, companion_repo in companion_files.items():
+                if not companion_repo or os.path.isfile(os.path.join(pack_dir, filename)):
+                    continue
+                logging.info(
+                    "[Chatterbox TTS] Fetching companion file '%s' from %s...",
+                    filename,
+                    companion_repo,
+                )
+                hf_hub_download(
+                    repo_id=companion_repo, filename=filename, local_dir=pack_dir
+                )
 
     @staticmethod
+    @staticmethod
+    def _registry_entry(model_name: str) -> Optional[dict]:
+        """The registry config for ``model_name``, official or local, or ``None``."""
+        entry = MODEL_CONFIGS.get(model_name)
+        if entry is not None:
+            return entry
+        return AVAILABLE_CHATTERBOX_MODELS.get(model_name)
+
+    @staticmethod
+    def _resolve_mtl_t3_file(pack_dir: str, model_name: str, t3_model: str) -> str:
+        """The T3 checkpoint a multilingual pack actually holds.
+
+        Precedence: the registry's ``t3_checkpoint`` (a Single Language Pack
+        entry names its own per-language blob), then the version combo's
+        filename when the pack carries it, then -- for a community SLP
+        directory no registry entry covers -- the single ``t3_*.safetensors``
+        that is not one of the known per-entry-point checkpoints. Falls back
+        to the combo filename so the missing-file message names what the user
+        selected.
+        """
+        entry = ChatterboxLoader._registry_entry(model_name)
+        registered = entry.get("t3_checkpoint") if entry else None
+        if registered:
+            return str(registered)
+        if os.path.isdir(pack_dir):
+            entries = set(os.listdir(pack_dir))
+            if t3_model in entries:
+                return t3_model
+            known = set(MTL_T3_MODELS.values()) | set(CHATTERBOX_WEIGHT_FILES)
+            language_t3 = sorted(
+                name
+                for name in entries
+                if name.startswith("t3_")
+                and name.endswith(".safetensors")
+                and name not in known
+            )
+            if len(language_t3) == 1:
+                return language_t3[0]
+        return t3_model
+
+    @staticmethod
+    def _resolve_mtl_s3gen_file(pack_dir: str, model_name: str) -> str:
+        """The s3gen decoder filename a multilingual pack actually holds.
+
+        The directory wins (a local community pack is on disk when this is
+        called with a ``model_path``); a registry entry whose ``files`` list
+        names the v3 decoder follows; the shared repo's canonical
+        ``s3gen.pt`` is the default, so the missing-file message keeps
+        naming it.
+        """
+        if os.path.isdir(pack_dir):
+            for name in MTL_S3GEN_CHECKPOINTS:
+                if os.path.isfile(os.path.join(pack_dir, name)):
+                    return name
+        entry = ChatterboxLoader._registry_entry(model_name)
+        files = entry.get("files", ()) if entry else ()
+        for name in MTL_S3GEN_CHECKPOINTS:
+            if name in files:
+                return name
+        return MTL_S3GEN_CHECKPOINTS[0]
+
     def load_multilingual_model(
         model_name: str,
         t3_model: str,
@@ -774,8 +862,10 @@ class ChatterboxLoader:
 
         Args:
             model_name: Pack name or directory basename, from the dropdown.
-            t3_model: The **resolved T3 checkpoint filename** (``v3`` and ``v2``
-                are resolved by :mod:`modules.constants` before they get here).
+            t3_model: The **resolved T3 checkpoint filename** from the
+                version combo. A Single Language Pack overrides it with its
+                own per-language checkpoint (see
+                :meth:`_resolve_mtl_t3_file`).
             device: Where the weights should live.
             client_id: Websocket id for a first-run download.
             model_path: Pack directory; resolved from ``model_name`` when omitted.
@@ -789,16 +879,20 @@ class ChatterboxLoader:
         """
         pack_dir = model_path or ChatterboxLoader.resolve_pack_dir(model_name)
         _refuse_wrong_variant_pack(pack_dir, model_name, entry_point="multilingual")
-        required = (*MTL_CHECKPOINT_FILES, t3_model)
+        t3_model = ChatterboxLoader._resolve_mtl_t3_file(pack_dir, model_name, t3_model)
+        s3gen_file = ChatterboxLoader._resolve_mtl_s3gen_file(pack_dir, model_name)
+        required = (*MTL_CHECKPOINT_FILES, s3gen_file, t3_model)
 
         from .constants import CHATTERBOX_REPO_ID
 
+        entry = ChatterboxLoader._registry_entry(model_name) or {}
         ChatterboxLoader._ensure_entry_point_dir(
             pack_dir,
-            CHATTERBOX_REPO_ID,
+            str(entry.get("repo_id") or CHATTERBOX_REPO_ID),
             required,
             model_name,
             client_id,
+            companion_files=entry.get("companion_files"),
         )
 
         missing = ChatterboxLoader._missing_checkpoint_files(pack_dir, required)

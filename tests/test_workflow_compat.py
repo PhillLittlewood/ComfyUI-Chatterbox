@@ -34,9 +34,14 @@ import pytest
 
 from ComfyUI_Chatterbox.nodes import ChatterboxTTSNode, ChatterboxVCNode
 
-from .conftest_helpers import load_frozen_snapshot
+from .conftest_helpers import empty_pack_root, load_frozen_snapshot
 
 from conftest import ROOT_DIR
+
+
+@pytest.fixture(autouse=True)
+def _pin_pack_discovery_to_an_empty_root(empty_pack_root):
+    """The shipped workflows were saved against an empty models dir."""
 
 # Both spellings, because the directory is renamed during the rebuild and this
 # file must keep guarding the contents either way.
@@ -246,15 +251,19 @@ class TestShippedWidgetValuesAgainstTheLiveSchema:
         widgets = _widget_names(ChatterboxTTSNode)
         assert widgets[: len(frozen)] == frozen
         # The S6.3 runtime widgets, then the Turbo-family controls appended
-        # when the Turbo node merged into this one (2026-10-06).
+        # when the Turbo node merged into this one (2026-10-06), then the
+        # Flash controls appended with the Single Language Pack round
+        # (2026-10-07).
         assert widgets[len(frozen) :] == (
             "device",
             "dtype",
             "attention_mode",
             "top_k",
             "normalize_loudness",
+            "num_steps",
+            "cfg_scale",
         )
-        assert len(widgets) == len(frozen) + 5
+        assert len(widgets) == len(frozen) + 7
 
     def test_the_tts_node_validates_the_shipped_pack(self) -> None:
         path = os.path.join(ROOT_DIR, "example_workflows", "ChatterboxTTS-workflow.json")

@@ -240,6 +240,32 @@ class ChatterboxTTSNode(io.ComfyNode):
                         "multilingual packs."
                     ),
                 ),
+                io.Int.Input(
+                    "num_steps",
+                    default=10,
+                    min=1,
+                    max=128,
+                    step=1,
+                    tooltip=(
+                        "How many block-diffusion denoising steps to run. Fewer "
+                        "steps are faster but rougher; the upstream default of "
+                        "10 matches the paper's best configuration. Flash packs "
+                        "only; every other family ignores this."
+                    ),
+                ),
+                io.Float.Input(
+                    "cfg_scale",
+                    default=1.0,
+                    min=0.0,
+                    max=3.0,
+                    step=0.05,
+                    tooltip=(
+                        "Block-diffusion classifier-free guidance scale. 1.0 "
+                        "(the upstream default) means no guidance; values above "
+                        "1 trade naturalness for prompt adherence. Flash packs "
+                        "only; every other family ignores this."
+                    ),
+                ),
                 io.Audio.Input(
                     "audio_prompt",
                     optional=True,
@@ -294,6 +320,8 @@ class ChatterboxTTSNode(io.ComfyNode):
         attention_mode: str = "sdpa",
         top_k: int = 1000,
         normalize_loudness: bool = True,
+        num_steps: int = 10,
+        cfg_scale: float = 1.0,
         audio_prompt: Optional[dict] = None,
         client_id: Optional[str] = None,
     ) -> io.NodeOutput:
@@ -302,7 +330,9 @@ class ChatterboxTTSNode(io.ComfyNode):
         One node serves every TTS pack: the loader routes Turbo/Nano packs to
         their own entry point, and ``generate_audio`` dispatches on the loaded
         model -- Turbo-family packs get the top-k sampler and this node's
-        ``top_k``/``normalize_loudness`` widgets, classic packs ignore them.
+        ``top_k``/``normalize_loudness`` widgets, Flash packs get
+        ``num_steps``/``cfg_scale``, classic packs ignore the family-specific
+        ones.
 
         The vendored ``chatterbox`` package is never imported here: the model
         classes are reached lazily by ``modules.loader``, so importing this
@@ -351,6 +381,8 @@ class ChatterboxTTSNode(io.ComfyNode):
                 use_watermark=use_watermark,
                 top_k=top_k,
                 norm_loudness=normalize_loudness,
+                num_steps=num_steps,
+                cfg_scale=cfg_scale,
             )
         except interrupt_error:
             # InterruptProcessingException derives from BaseException, so this

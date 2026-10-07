@@ -118,7 +118,7 @@ below. Load a ready-made graph from
 | Node id | Menu name | Outputs | What it does |
 |---|---|---|---|
 | `ChatterboxTTS` | Chatterbox TTS 📢 | `audio` | Synthesises speech from text, optionally cloning a voice from a short audio prompt. One node for every TTS pack: classic, the Turbo family (Turbo 350M / Nano 110M), and Flash are routed automatically from the pack's contents, with paralinguistic tags and a top-k sampler for Turbo-family packs. |
-| `ChatterboxMTLTTS` | Chatterbox Multilingual TTS 🌍 | `audio` | Synthesises speech in 23 languages with the multilingual model, in v1, v2 or v3. |
+| `ChatterboxMTLTTS` | Chatterbox Multilingual TTS 🌍 | `audio` | Synthesises speech in 23 languages with the multilingual model, in v1, v2 or v3 — plus the six Single Language Pack finetunes (Chinese, Mexican/Castilian Spanish, Brazilian/European Portuguese, Hindi). |
 | `ChatterboxSRT` | Chatterbox SRT / Subtitles 📝 | `audio`, `generation_info`, `timing_report`, `Adjusted_SRT` | Speaks a timed SRT script and reconciles the model's actual timings with the file's, returning an adjusted subtitle file that matches the audio. |
 | `ChatterboxDialog` | Chatterbox Multi-Speaker Dialog 🎭 | `dialog_audio`, `speaker_a_audio`, `speaker_b_audio`, `speaker_c_audio`, `speaker_d_audio`, `message` | Speaks a `SPEAKER A:` / `SPEAKER B:` conversation with a separate voice per speaker, returning the mixed dialog plus each speaker's isolated stem. |
 | `ChatterboxVC` | Chatterbox Voice Conversion 🗣️ | `converted_audio` | Re-voices a source recording using a target voice. |
@@ -222,10 +222,20 @@ downloaded:
   `src/chatterbox_flash/` — nothing to install, it works out of the box.
   Flash loads through the same **Chatterbox TTS 📢** node and has no built-in
   voice — connect a reference audio clip to the node's audio prompt input.
-  `exaggeration` and `temperature` apply; the classic sampler's knobs
-  (`cfg_weight`, `min_p`, `top_k`, watermarking) do not. Do **not**
+  `exaggeration` and `temperature` apply, as do the Flash sampler's own
+  `num_steps` (diffusion steps) and `cfg_scale` widgets; the classic sampler's
+  knobs (`cfg_weight`, `min_p`, `top_k`, watermarking) do not. Do **not**
   pip-install `chatterbox-flash` yourself: its dependency block pulls an old
   `chatterbox` package over this node's vendored, patched tree.
+- **Single Language Packs** (the six `ResembleAI/Chatterbox-Multilingual-<lang>`
+  finetunes) load through the **Chatterbox Multilingual TTS 🌍** node. Each
+  ships its own per-language t3 checkpoint (`t3_zh_cmn`, `t3_es_mx_latam`,
+  `t3_es_es`, `t3_pt_br`, `t3_pt_pt`, `t3_hi`) plus the multilingual s3gen and
+  grapheme tokenizer, so the pack folder is self-describing — the pack decides
+  what loads, not the variant widget. Only zh-cmn ships a built-in voice
+  (`conds.pt`); the other five fetch the shared `ve.pt` from
+  `ResembleAI/chatterbox` on first load and **require a reference audio clip**.
+  The `language` widget is ignored — every pack speaks its own language.
 - Classic packs (`t3_cfg.safetensors`) are the voice-conversion packs too.
 
 Folders from earlier builds named like a pack plus a variant

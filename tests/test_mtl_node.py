@@ -63,6 +63,9 @@ class _RecordingModel:
 
     def __init__(self) -> None:
         self.calls: list[dict] = []
+        # A pack with a built-in voice: without this the no-conds guard in
+        # generate_mtl_audio refuses the call before the model is reached.
+        self.conds = object()
 
     def generate(self, text, language_id, **kwargs):
         import torch

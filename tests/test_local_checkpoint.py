@@ -32,6 +32,7 @@ import torch
 
 from ComfyUI_Chatterbox.modules.loader import (
     MTL_CHECKPOINT_FILES,
+    MTL_S3GEN_CHECKPOINTS,
     TURBO_CHECKPOINT_FILES,
     ChatterboxLoader,
 )
@@ -365,11 +366,12 @@ class TestIncompleteDirectoryIsRefused:
             assert "_require_checkpoint_files(" in source, key
 
     def test_the_multilingual_set_is_the_pt_layout(self, real_vendor) -> None:
+        """The two fixed files; the s3gen + t3 names are resolved per pack (P-036)."""
         assert MTL_CHECKPOINT_FILES == (
             "ve.pt",
-            "s3gen.pt",
             "grapheme_mtl_merged_expanded_v1.json",
         )
+        assert MTL_S3GEN_CHECKPOINTS == ("s3gen.pt", "s3gen_v3.pt")
         assert real_vendor["mtl_tts"].REQUIRED_CHECKPOINT_FILES == MTL_CHECKPOINT_FILES
 
     def test_the_turbo_set_is_shared_by_turbo_and_nano(self, real_vendor) -> None:

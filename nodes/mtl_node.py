@@ -97,7 +97,9 @@ class ChatterboxMTLTTSNode(io.ComfyNode):
             category=_CATEGORY,
             description=(
                 "Synthesise speech in 23 languages with the Chatterbox "
-                "multilingual model, in v1, v2 or v3."
+                "multilingual model, in v1, v2 or v3 -- plus the Single "
+                "Language Pack finetunes (zh-cmn, es-mx-latam, es-es, pt-br, "
+                "pt-pt, hi)."
             ),
             inputs=[
                 io.Combo.Input(
@@ -126,7 +128,11 @@ class ChatterboxMTLTTSNode(io.ComfyNode):
                         "t3_23lang.safetensors is the original 23-language "
                         "model, with no special-token vocabulary.\n\n"
                         "Only v2 has the 30 documented special tokens "
-                        "(<giggle>, <whisper>, <clear_throat> and the rest)."
+                        "(<giggle>, <whisper>, <clear_throat> and the rest).\n\n"
+                        "Single Language Packs ignore this widget: each ships "
+                        "its own per-language t3 checkpoint (t3_zh_cmn, "
+                        "t3_es_mx_latam, ...), which loads regardless of what "
+                        "is selected here."
                     ),
                 ),
                 io.Combo.Input(
@@ -138,7 +144,10 @@ class ChatterboxMTLTTSNode(io.ComfyNode):
                         "codes: ar da de el en es fi fr he hi it ja ko ms nl no "
                         "pl pt ru sv sw tr zh. There is no Vietnamese -- the "
                         "Vietnamese and Egyptian-Arabic models are community "
-                        "finetunes, and load like any other local checkpoint."
+                        "finetunes, and load like any other local checkpoint.\n\n"
+                        "Single Language Pack finetunes are pinned to their own "
+                        "language: zh-cmn speaks zh, es-mx-latam and es-es "
+                        "speak es, pt-br and pt-pt speak pt, hi speaks hi."
                     ),
                 ),
                 io.String.Input(
@@ -266,7 +275,10 @@ class ChatterboxMTLTTSNode(io.ComfyNode):
                     tooltip=(
                         "Reference audio to clone the voice from. 5-6 seconds of "
                         "clean speech is recommended. When left unconnected the "
-                        "checkpoint's built-in voice is used."
+                        "checkpoint's built-in voice is used. The multilingual "
+                        "repo and the zh-cmn Single Language Pack ship one; the "
+                        "other five Single Language Packs do not -- for them a "
+                        "reference clip is required."
                     ),
                 ),
             ],
