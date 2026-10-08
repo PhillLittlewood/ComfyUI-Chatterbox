@@ -34,11 +34,11 @@ EXPECTED_FILE_HASHES: dict[str, str] = {
     "chatterbox/models/s3gen/const.py": "4e330bdc6b632afb12edb845818ffe2bf7f13441dee4d69bd74014093985fa6b",
     "chatterbox/models/s3gen/decoder.py": "ce0c531bafea8c38658b98ab8c789f14e6a23a3ece99da08631765599b0309d9",
     "chatterbox/models/s3gen/f0_predictor.py": "829f58100879516a1eea93b09c62afcf16c452795a90e76e1bb700e2db606d3f",
-    "chatterbox/models/s3gen/flow.py": "2f94fc0f0e66c74e2a1f86ec3cacca08b3193ab198c711dd5d936bf3b2493157",
+    "chatterbox/models/s3gen/flow.py": "7cb6b160e489b6f0ef5da7ce380db0230bd815857be4b3f33007b0290960855a",
     "chatterbox/models/s3gen/flow_matching.py": "f5a0d68d1a00c59e3449bbe6984647eea497619405e39ff4578715bf0cae8e05",
     "chatterbox/models/s3gen/hifigan.py": "0f9adcf24117e504027a515ffa1bf2a42d5f851f4a1a79665af24f39f8660a5b",
     "chatterbox/models/s3gen/matcha/_diffusers_compat.py": "d5a6c233b241ec4e77ba79b7c41f52d0f285fe12e163be90145449fae68d24d7",
-    "chatterbox/models/s3gen/matcha/decoder.py": "00a4a0c5d0714d073bf8e6be4e50650147b34ef3204907f5f35f708698093abf",
+    "chatterbox/models/s3gen/matcha/decoder.py": "8deb3683d2b3081de91f0f346bbb8d0557a32f1ce0014348fa163156ecf83a91",
     "chatterbox/models/s3gen/matcha/flow_matching.py": "f3cdc60a786a722ec1b3bf9b12b566452a41fbe563636b71ed87b422631f36d9",
     "chatterbox/models/s3gen/matcha/text_encoder.py": "75c1e699a344866daee6edde583f60976bf90060865b23518560170e2f165c98",
     "chatterbox/models/s3gen/matcha/transformer.py": "e566d927dc7d597528628ddc167af95ad5c2814b9bec52cd67e2f437e999b69e",
@@ -177,6 +177,30 @@ class TestDeadCodeRemoved:
             if re.search(r"alignment_stream_analyzer|AlignmentStreamAnalyzer", source):
                 offenders.append(rel_file)
         assert not offenders, f"dead analyzer still referenced in: {offenders}"
+
+
+class TestNoDeadDependencies:
+    """conformer and omegaconf were dead imports; nothing may pull them back.
+
+    The suite mocks the vendored tree at collection time, so a reintroduced
+    import would not fail there -- this scan reads the source and would.
+    """
+
+    def test_no_conformer_or_omegaconf_imports(self) -> None:
+        offenders: list[str] = []
+        for rel_file in vendor_files():
+            path = os.path.join(VENDOR_DIR, rel_file[len("chatterbox/"):].replace("/", os.sep))
+            tree = ast.parse(open(path, "r", encoding="utf-8").read(), filename=path)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    roots = {alias.name.split(".")[0] for alias in node.names}
+                elif isinstance(node, ast.ImportFrom):
+                    roots = {(node.module or "").split(".")[0]} if node.level == 0 else set()
+                else:
+                    continue
+                if roots & {"conformer", "omegaconf"}:
+                    offenders.append(rel_file)
+        assert not offenders, f"vendored files importing a dead dependency: {offenders}"
 
 
 class TestVendorTreeIsInertDuringCollection:

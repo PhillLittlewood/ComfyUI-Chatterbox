@@ -55,7 +55,7 @@ COMFYUI_BUNDLED: frozenset[str] = frozenset(
 )
 
 # Everything ComfyUI must install for this node to work at all.
-REQUIRED_DEPS: frozenset[str] = frozenset({"s3tokenizer", "conformer", "omegaconf"})
+REQUIRED_DEPS: frozenset[str] = frozenset({"s3tokenizer"})
 
 OPTIONAL_EXTRAS: dict[str, frozenset[str]] = {
     "watermarking": frozenset({"resemble-perth"}),
@@ -208,6 +208,14 @@ class TestRequirementsPyprojectParity:
         assert "diffusers" not in requirements
         declared = {distribution_name(d) for d in project(pyproject)["dependencies"]}
         assert "diffusers" not in declared
+
+    def test_conformer_and_omegaconf_are_in_neither_list(self, pyproject: dict, requirements: list[str]) -> None:
+        """Both were dead imports in the vendored tree and were dropped on
+        2026-10-07. Re-adding them re-adds dead code."""
+        declared = {distribution_name(d) for d in project(pyproject)["dependencies"]}
+        for package in ("conformer", "omegaconf"):
+            assert package not in requirements
+            assert package not in declared
 
     def test_the_old_tqdm_parity_bug_is_gone(self, pyproject: dict) -> None:
         """It used to be declared in pyproject but missing from requirements."""

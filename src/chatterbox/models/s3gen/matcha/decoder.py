@@ -4,7 +4,6 @@ from typing import Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from conformer import ConformerBlock
 from einops import pack, rearrange, repeat
 
 # PATCHED (src/PATCHES.md P-020, P-022): `get_activation` used to be imported
@@ -162,45 +161,6 @@ class Upsample1D(nn.Module):
         return outputs
 
 
-class ConformerWrapper(ConformerBlock):
-    def __init__(  # pylint: disable=useless-super-delegation
-        self,
-        *,
-        dim,
-        dim_head=64,
-        heads=8,
-        ff_mult=4,
-        conv_expansion_factor=2,
-        conv_kernel_size=31,
-        attn_dropout=0,
-        ff_dropout=0,
-        conv_dropout=0,
-        conv_causal=False,
-    ):
-        super().__init__(
-            dim=dim,
-            dim_head=dim_head,
-            heads=heads,
-            ff_mult=ff_mult,
-            conv_expansion_factor=conv_expansion_factor,
-            conv_kernel_size=conv_kernel_size,
-            attn_dropout=attn_dropout,
-            ff_dropout=ff_dropout,
-            conv_dropout=conv_dropout,
-            conv_causal=conv_causal,
-        )
-
-    def forward(
-        self,
-        hidden_states,
-        attention_mask,
-        encoder_hidden_states=None,
-        encoder_attention_mask=None,
-        timestep=None,
-    ):
-        return super().forward(x=hidden_states, mask=attention_mask.bool())
-
-
 class Decoder(nn.Module):
     def __init__(
         self,
@@ -321,19 +281,7 @@ class Decoder(nn.Module):
 
     @staticmethod
     def get_block(block_type, dim, attention_head_dim, num_heads, dropout, act_fn):
-        if block_type == "conformer":
-            block = ConformerWrapper(
-                dim=dim,
-                dim_head=attention_head_dim,
-                heads=num_heads,
-                ff_mult=1,
-                conv_expansion_factor=2,
-                ff_dropout=dropout,
-                attn_dropout=dropout,
-                conv_dropout=dropout,
-                conv_kernel_size=31,
-            )
-        elif block_type == "transformer":
+        if block_type == "transformer":
             block = BasicTransformerBlock(
                 dim=dim,
                 num_attention_heads=num_heads,

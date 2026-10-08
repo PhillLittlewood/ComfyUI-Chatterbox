@@ -21,7 +21,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 from .utils.mask import make_pad_mask
 from .configs import CFM_PARAMS
-from omegaconf import DictConfig
+from ..utils import AttrDict
 
 
 logger = logging.getLogger(__name__)
@@ -54,7 +54,7 @@ class CausalMaskedDiffWithXvec(torch.nn.Module):
                  encoder: torch.nn.Module = None,
                  decoder: torch.nn.Module = None,
                  decoder_conf: Dict = {'in_channels': 240, 'out_channel': 80, 'spk_emb_dim': 80, 'n_spks': 1,
-                                       'cfm_params': DictConfig(
+                                       'cfm_params': AttrDict(
                                            {'sigma_min': 1e-06, 'solver': 'euler', 't_scheduler': 'cosine',
                                             'training_cfg_rate': 0.2, 'inference_cfg_rate': 0.7,
                                             'reg_loss_type': 'l1'}),

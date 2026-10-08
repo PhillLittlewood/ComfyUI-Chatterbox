@@ -65,13 +65,11 @@
 | **Accelerator** | CUDA, ROCm, XPU or MPS. The `device` widget is built from whatever ComfyUI itself offers, so the list always matches the running core. |
 | **Disk** | ~2.5 GB per downloaded voice pack, under `ComfyUI/models/tts/chatterbox/`. |
 
-The only packages this node adds to your environment are three pure-Python,
-compiled-extension-free wheels:
+The only package this node adds to your environment is one pure-Python,
+compiled-extension-free wheel:
 
 ```text
 s3tokenizer
-conformer
-omegaconf
 ```
 
 Everything else — `torch`, `torchaudio`, `transformers`, `huggingface_hub`,

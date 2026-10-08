@@ -62,9 +62,9 @@ class TestBaselineEnvironment:
             f"huggingface_hub {version} is older than the 1.0 baseline"
         )
 
-    @pytest.mark.parametrize("package", ["s3tokenizer", "conformer", "omegaconf"])
+    @pytest.mark.parametrize("package", ["s3tokenizer"])
     def test_newly_installed_packages_import(self, package):
-        """The three additions Phase 0 installs for the vendored package."""
+        """The one addition Phase 0 installs for the vendored package."""
         assert package not in sys.modules or sys.modules[package] is not None
         module = importlib.import_module(package)
         assert module.__file__ is not None or hasattr(module, "__path__")

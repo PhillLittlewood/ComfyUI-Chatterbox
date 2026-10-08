@@ -283,7 +283,7 @@ class TestReadmeClaimsMatchTheCode:
         )
 
     @pytest.mark.parametrize(
-        "package", ["s3tokenizer", "conformer", "omegaconf"]
+        "package", ["s3tokenizer"]
     )
     def test_hard_dependency_is_listed(self, readme: str, package: str) -> None:
         assert package in readme, (
