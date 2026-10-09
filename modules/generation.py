@@ -41,7 +41,6 @@ the ``client_id`` correction.
 
 from __future__ import annotations
 
-import contextlib
 import gc
 import logging
 import os
@@ -53,10 +52,11 @@ from . import model_info
 from .attention_utils import get_attn_implementation_for_load, resolve_attention_mode
 from .audio_utils import (
     S3GEN_SAMPLE_RATE,
+    S3_TOKENIZER_SAMPLE_RATE,
     downmix_to_mono,
     interrupt_exception_class,
+    preprocess_comfy_audio,
     set_seed,
-    temp_wav_path,
 )
 from .device_utils import (
     DEVICE_CPU,
@@ -486,16 +486,6 @@ def force_offload_model(
 # ---------------------------------------------------------------------------
 
 
-@contextlib.contextmanager
-def _temp_wav_or_none(audio: Optional[dict]):
-    """``temp_wav_path(audio)``, or a null context yielding ``None``."""
-    if audio is None:
-        yield None
-        return
-    with temp_wav_path(audio) as path:
-        yield path
-
-
 def generate_audio(
     model: Any,
     text: str,
@@ -528,8 +518,8 @@ def generate_audio(
         model: The ``ChatterboxTTS`` instance from :func:`load_chatterbox_model`.
         text: The text to speak. Must be non-blank.
         audio_prompt: Optional ComfyUI ``AUDIO`` dict to clone the voice from.
-            Written to a temporary ``.wav`` for the duration of the call and
-            removed afterwards, including on failure.
+            Downmixed, scrubbed and resampled to 24 kHz in memory, then handed
+            to the model as a waveform.
         exaggeration: Expressiveness.
         temperature: Sampling temperature.
         cfg_weight: Classifier-free guidance weight.
@@ -591,41 +581,45 @@ def generate_audio(
     progress_bar = _build_progress_bar(max_new_tokens)
 
     try:
-        # The vendored generate takes a *file path* for the voice prompt, so
-        # the temp file's lifetime brackets exactly this call -- including when
-        # it raises.
-        with _temp_wav_or_none(audio_prompt) as prompt_path:
-            try:
-                with torch.no_grad():
-                    waveform = model.generate(
-                        text,
-                        audio_prompt_path=prompt_path,
-                        exaggeration=exaggeration,
-                        temperature=temperature,
-                        cfg_weight=cfg_weight,
-                        repetition_penalty=repetition_penalty,
-                        min_p=min_p,
-                        top_p=top_p,
-                        pbar=progress_bar,
-                        max_new_tokens=max_new_tokens,
-                        flow_cfg_scale=flow_cfg_scale,
-                        watermark=bool(use_watermark),
-                    )
-            except interrupt_error:
-                # FIRST, and before `except Exception`. The interrupt derives
-                # from BaseException, so this clause is unreachable from the
-                # generic handler -- and a cancelled run is not a failed run:
-                # re-raising here is what actually cancels it.
-                logging.info(
-                    "[Chatterbox TTS] Generation was interrupted; cancelling the run."
+        # The voice prompt is handed over in memory: preprocess_comfy_audio
+        # downmixes, scrubs and resamples it to the 24 kHz the model
+        # conditions on, and the vendored loader takes a waveform as-is
+        # (``load_audio_at``, ``src/chatterbox/models/dsp.py``). ``None`` when
+        # no clip is connected, which the vendor answers with the pack's
+        # built-in voice. Inside the ``try`` so a malformed clip still closes
+        # the progress bar, the way the temp-file write it replaces did.
+        prompt = preprocess_comfy_audio(audio_prompt, target_sr=S3GEN_SAMPLE_RATE)
+        try:
+            with torch.no_grad():
+                waveform = model.generate(
+                    text,
+                    audio_prompt_path=prompt,
+                    exaggeration=exaggeration,
+                    temperature=temperature,
+                    cfg_weight=cfg_weight,
+                    repetition_penalty=repetition_penalty,
+                    min_p=min_p,
+                    top_p=top_p,
+                    pbar=progress_bar,
+                    max_new_tokens=max_new_tokens,
+                    flow_cfg_scale=flow_cfg_scale,
+                    watermark=bool(use_watermark),
                 )
-                raise
-            except Exception:
-                logging.exception(
-                    "[Chatterbox TTS] Generation failed for a %d-character text.",
-                    len(text),
-                )
-                raise
+        except interrupt_error:
+            # FIRST, and before `except Exception`. The interrupt derives
+            # from BaseException, so this clause is unreachable from the
+            # generic handler -- and a cancelled run is not a failed run:
+            # re-raising here is what actually cancels it.
+            logging.info(
+                "[Chatterbox TTS] Generation was interrupted; cancelling the run."
+            )
+            raise
+        except Exception:
+            logging.exception(
+                "[Chatterbox TTS] Generation failed for a %d-character text.",
+                len(text),
+            )
+            raise
     finally:
         progress_bar.finish()
 
@@ -684,29 +678,40 @@ def convert_voice_audio(
     progress_bar = _build_progress_bar(n_timesteps)
 
     try:
-        with _temp_wav_or_none(audio) as source_path, _temp_wav_or_none(
-            target_voice_audio
-        ) as target_path:
-            try:
-                with torch.no_grad():
-                    waveform = model.generate(
-                        source_path,
-                        target_voice_path=target_path,
-                        n_timesteps=n_timesteps,
-                        pbar=progress_bar,
-                        temperature=temperature,
-                        flow_cfg_scale=flow_cfg_scale,
-                        watermark=bool(use_watermark),
-                    )
-            except interrupt_error:
-                logging.info(
-                    "[Chatterbox TTS] Voice conversion was interrupted; "
-                    "cancelling the run."
+        # Two rates, on purpose. The vendored ``generate`` loads the *source*
+        # at the tokenizer's 16 kHz (``load_audio_at(audio, S3_SR)``,
+        # ``vc.py``), and the *target* voice through ``set_target_voice`` at
+        # S3Gen's 24 kHz -- the only dual-rate call site in the tree.
+        # ``target`` is ``None`` when no target clip is connected, which the
+        # vendor answers with the pack's own ``conds.pt``. Both are prepped
+        # inside the ``try`` so the progress bar is closed on a malformed
+        # clip, the way the temp-file writes they replace were.
+        source = preprocess_comfy_audio(
+            audio, target_sr=S3_TOKENIZER_SAMPLE_RATE, name="source audio"
+        )
+        target = preprocess_comfy_audio(
+            target_voice_audio, target_sr=S3GEN_SAMPLE_RATE, name="target voice"
+        )
+        try:
+            with torch.no_grad():
+                waveform = model.generate(
+                    source,
+                    target_voice_path=target,
+                    n_timesteps=n_timesteps,
+                    pbar=progress_bar,
+                    temperature=temperature,
+                    flow_cfg_scale=flow_cfg_scale,
+                    watermark=bool(use_watermark),
                 )
-                raise
-            except Exception:
-                logging.exception("[Chatterbox TTS] Voice conversion failed.")
-                raise
+        except interrupt_error:
+            logging.info(
+                "[Chatterbox TTS] Voice conversion was interrupted; "
+                "cancelling the run."
+            )
+            raise
+        except Exception:
+            logging.exception("[Chatterbox TTS] Voice conversion failed.")
+            raise
     finally:
         progress_bar.finish()
 
@@ -922,20 +927,20 @@ def generate_mtl_audio(
         )
 
     set_seed(seed)
-    with _temp_wav_or_none(audio_prompt) as prompt_path:
-        with torch.no_grad():
-            waveform = model.generate(
-                text,
-                language_id=language_id,
-                audio_prompt_path=prompt_path,
-                exaggeration=exaggeration,
-                temperature=temperature,
-                cfg_weight=cfg_weight,
-                repetition_penalty=repetition_penalty,
-                min_p=min_p,
-                top_p=top_p,
-                watermark=bool(use_watermark),
-            )
+    prompt = preprocess_comfy_audio(audio_prompt, target_sr=S3GEN_SAMPLE_RATE)
+    with torch.no_grad():
+        waveform = model.generate(
+            text,
+            language_id=language_id,
+            audio_prompt_path=prompt,
+            exaggeration=exaggeration,
+            temperature=temperature,
+            cfg_weight=cfg_weight,
+            repetition_penalty=repetition_penalty,
+            min_p=min_p,
+            top_p=top_p,
+            watermark=bool(use_watermark),
+        )
     return _normalise_waveform(waveform), S3GEN_SAMPLE_RATE
 
 
@@ -984,19 +989,19 @@ def generate_turbo_audio(
         )
 
     set_seed(seed)
-    with _temp_wav_or_none(audio_prompt) as prompt_path:
-        with torch.no_grad():
-            waveform = model.generate(
-                text,
-                audio_prompt_path=prompt_path,
-                temperature=temperature,
-                top_k=int(top_k),
-                top_p=top_p,
-                repetition_penalty=repetition_penalty,
-                exaggeration=exaggeration,
-                norm_loudness=bool(norm_loudness),
-                watermark=bool(use_watermark),
-            )
+    prompt = preprocess_comfy_audio(audio_prompt, target_sr=S3GEN_SAMPLE_RATE)
+    with torch.no_grad():
+        waveform = model.generate(
+            text,
+            audio_prompt_path=prompt,
+            temperature=temperature,
+            top_k=int(top_k),
+            top_p=top_p,
+            repetition_penalty=repetition_penalty,
+            exaggeration=exaggeration,
+            norm_loudness=bool(norm_loudness),
+            watermark=bool(use_watermark),
+        )
     return _normalise_waveform(waveform), S3GEN_SAMPLE_RATE
 
 
@@ -1029,15 +1034,15 @@ def generate_flash_audio(
         )
 
     set_seed(seed)
-    with _temp_wav_or_none(audio_prompt) as prompt_path:
-        model.prepare_conditionals(prompt_path, exaggeration=exaggeration)
-        waveform = model.generate(
-            text,
-            exaggeration=exaggeration,
-            temperature=temperature,
-            num_steps=num_steps,
-            cfg_scale=cfg_scale,
-        )
+    prompt = preprocess_comfy_audio(audio_prompt, target_sr=S3GEN_SAMPLE_RATE)
+    model.prepare_conditionals(prompt, exaggeration=exaggeration)
+    waveform = model.generate(
+        text,
+        exaggeration=exaggeration,
+        temperature=temperature,
+        num_steps=num_steps,
+        cfg_scale=cfg_scale,
+    )
     return _normalise_waveform(waveform), S3GEN_SAMPLE_RATE
 
 

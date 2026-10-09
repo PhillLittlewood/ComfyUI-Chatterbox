@@ -8,13 +8,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Literal
 
-import librosa
 import numpy as np
 import torch
 import torch.nn.functional as F
 from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file
 
+from chatterbox.models.dsp import load_audio_at, resample
 from chatterbox.models.s3gen import S3GEN_SR, S3Gen
 from chatterbox.models.s3tokenizer import S3_SR
 from chatterbox.models.t3.modules.cond_enc import T3Cond
@@ -182,8 +182,8 @@ class ChatterboxFlashTTS:
         tokens, the first 10 s feed S3Gen's :meth:`embed_ref`, and the GE2E
         voice encoder produces the global speaker embedding.
         """
-        s3gen_ref_wav, _sr = librosa.load(str(wav_fpath), sr=S3GEN_SR)
-        ref_16k_wav = librosa.resample(s3gen_ref_wav, orig_sr=S3GEN_SR, target_sr=S3_SR)
+        s3gen_ref_wav = load_audio_at(wav_fpath, S3GEN_SR)
+        ref_16k_wav = resample(s3gen_ref_wav, S3GEN_SR, S3_SR)
 
         s3gen_ref_wav = s3gen_ref_wav[:DEC_COND_LEN]
         s3gen_ref_dict = self.s3gen.embed_ref(

@@ -42,14 +42,14 @@ class _CountingVC:
     """A conversion stand-in that records what it was handed.
 
     Deterministic *and* order-dependent: each call returns a distinct constant,
-    so the final result tells you how many passes ran, and the waveform read back
-    out of the temporary file tells you what the previous pass produced. That is
-    what makes "each pass is fed the previous output" an assertion rather than a
-    claim.
+    so the final result tells you how many passes ran, and the waveform the
+    previous pass handed to ``generate`` tells you what it produced. That is
+    what makes "each pass is fed the previous output" an assertion rather than
+    a claim.
 
-    ``convert_voice_audio`` hands the vendored models a *file path*, so the input
-    is read back from the ``.wav`` the helper wrote rather than inspected
-    in-process.
+    ``convert_voice_audio`` hands the vendored models an in-memory waveform
+    (P-043): a mono float32 array at the tokenizer's 16 kHz, so the input is
+    inspected in-process rather than read back from a temporary file.
     """
 
     def __init__(self, base: float = 0.5) -> None:
@@ -58,12 +58,11 @@ class _CountingVC:
 
     def generate(self, source, target_voice_path=None, **kwargs):
         import numpy as np
-        import soundfile as sf
 
-        samples, sample_rate = sf.read(source, dtype="float32")
+        samples = np.asarray(source, dtype=np.float32).reshape(-1)
         self.calls.append(
             {
-                "path": source,
+                "input_samples": int(samples.size),
                 "input_mean": float(np.mean(samples)) if samples.size else 0.0,
                 **kwargs,
             }
@@ -175,12 +174,20 @@ class TestRefinementPasses:
         model = _CountingVC()
         iterative_convert_voice(model, source_audio, refinement_passes=3)
 
+        # The source crosses at the tokenizer's 16 kHz (P-043): a second at
+        # 24 kHz resamples to 16 000 samples.
+        assert model.calls[0]["input_samples"] == 16000
+
         # Pass 1 sees the source clip (mean 0.25); passes 2 and 3 see the
         # previous pass's output (0.5 then 1.0), not the source again.
+        # Tolerance 1e-3 rather than 1e-4: the sinc resampler of P-044 leaves
+        # a ~1e-4 ripple on a constant clip's edges, and the fold compounds
+        # it -- 0.2501 / 0.4999 / 0.9998 rather than exact constants. The
+        # property under test is the fold, and the inequality below pins it.
         means = [call["input_mean"] for call in model.calls]
-        assert means[0] == pytest.approx(0.25, abs=1e-4), means
-        assert means[1] == pytest.approx(0.5, abs=1e-4), means
-        assert means[2] == pytest.approx(1.0, abs=1e-4), means
+        assert means[0] == pytest.approx(0.25, abs=1e-3), means
+        assert means[1] == pytest.approx(0.5, abs=1e-3), means
+        assert means[2] == pytest.approx(1.0, abs=1e-3), means
         assert means[1:] != [means[0]] * 2, "the source was re-converted every pass"
 
     def test_n_passes_are_deterministic(self, source_audio) -> None:

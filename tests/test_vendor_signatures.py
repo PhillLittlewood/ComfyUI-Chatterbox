@@ -413,6 +413,37 @@ class TestCompatPatches:
         assert 'if str(device) in ["cpu", "mps"]:' in source
         assert 'if device in ["cpu", "mps"]:' not in source
 
+    def test_reference_clip_guards_use_is_not_not_none(self) -> None:
+        """A reference clip handed in as audio must not hit a truth test.
+
+        ``if audio_prompt_path:`` raises on a multi-element ndarray
+        (``ValueError: The truth value of an array ... is ambiguous``), so
+        every entry point that takes one in memory -- the four entry points
+        P-039..P-042 teach to accept one -- has to test identity instead.
+        The mocked unit suite never exercises this: the vendor is a
+        ``MagicMock`` here, so both spellings pass every other check.
+
+        An empty-string path stays falsy under both spellings, and the
+        ``else`` branch still catches the case where nothing was passed.
+        """
+        audio_guards = (
+            "chatterbox/tts.py",
+            "chatterbox/mtl_tts.py",
+            "chatterbox/tts_turbo.py",
+        )
+        for rel_file in audio_guards:
+            source = read_source(rel_file)
+            assert "if audio_prompt_path is not None:" in source, (
+                f"{rel_file}: the reference-clip guard must be an identity test"
+            )
+            assert "if audio_prompt_path:" not in source, (
+                f"{rel_file}: an ndarray reference clip raises ValueError under a truth test"
+            )
+
+        vc = read_source("chatterbox/vc.py")
+        assert "if target_voice_path is not None:" in vc
+        assert "if target_voice_path:" not in vc
+
     def test_perceiver_uses_the_modern_sdpa_api(self) -> None:
         source = read_source("chatterbox/models/t3/modules/perceiver.py")
         assert "from torch.nn.attention import SDPBackend, sdpa_kernel" in source
@@ -512,16 +543,18 @@ class TestCompatPatches:
 
 
 class TestUpstreamFixes:
-    """Fixes that arrive with v0.1.7 and must not be reverted by a re-sync."""
+    """Fixes that arrive with v0.1.7 and must not be reverted by a re-sync.
+
+    ``VoiceEncoder.embeds_from_wavs`` is deliberately absent: P-049 replaced
+    that file's librosa resampler, and with it the soxr ``kaiser_fast`` choice
+    the upstream row recorded -- a file the patch table claims as locally
+    edited cannot also be adopted verbatim, and the resampler the row qualified
+    no longer exists in the tree. Recorded in ``src/PATCHES.md`` instead.
+    """
 
     def test_campplus_disables_memory_efficient_checkpointing(self) -> None:
         source = read_source("chatterbox/models/s3gen/s3gen.py")
         assert "CAMPPlus(" in source and "memory_efficient=False" in source
-
-    def test_resampling_uses_kaiser_fast(self) -> None:
-        source = read_source("chatterbox/models/voice_encoder/voice_encoder.py")
-        assert 'res_type="kaiser_fast"' in source
-        assert "kaiser_best" not in source
 
     def test_s3gen_silence_token_constant_exists(self) -> None:
         source = read_source("chatterbox/models/s3gen/const.py")

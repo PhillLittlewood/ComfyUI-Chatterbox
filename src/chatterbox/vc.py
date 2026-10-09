@@ -2,7 +2,6 @@ from pathlib import Path
 
 import logging
 
-import librosa
 import torch
 import torch.nn.functional as F
 from huggingface_hub import hf_hub_download
@@ -16,6 +15,7 @@ try:
 except ImportError:
     perth = None
 
+from .models.dsp import load_audio_at
 from .models.s3tokenizer import S3_SR, S3_TOKEN_RATE
 from .models.s3gen import S3GEN_SR, S3Gen
 
@@ -166,8 +166,8 @@ class ChatterboxVC:
         return cls.from_local(Path(local_path).parent, device)
 
     def set_target_voice(self, wav_fpath):
-        ## Load reference wav
-        s3gen_ref_wav, _sr = librosa.load(wav_fpath, sr=S3GEN_SR)
+        ## Load reference wav -- path, in-memory waveform, or tensor (P-042)
+        s3gen_ref_wav = load_audio_at(wav_fpath, S3GEN_SR)
 
         # PATCHED (src/PATCHES.md P-008): pad onto the 40 ms token grid before
         # truncating, so the mel/token length invariant survives short clips.
@@ -190,14 +190,16 @@ class ChatterboxVC:
         # PATCHED (src/PATCHES.md P-024): opt out of watermarking entirely.
         watermark=True,
     ):
-        if target_voice_path:
+        # PATCHED (src/PATCHES.md P-043): `is not None`, not a truth test — a
+        # target clip handed in as a multi-element ndarray raises
+        # `ValueError: The truth value of an array ... is ambiguous` here.
+        if target_voice_path is not None:
             self.set_target_voice(target_voice_path)
         else:
             assert self.ref_dict is not None, "Please `set_target_voice` first or specify `target_voice_path`"
 
         with torch.inference_mode():
-            audio_16, _ = librosa.load(audio, sr=S3_SR)
-            audio_16 = torch.from_numpy(audio_16).float().to(self.device)[None, ]
+            audio_16 = torch.from_numpy(load_audio_at(audio, S3_SR)).float().to(self.device)[None, ]
 
             s3_tokens, _ = self.s3gen.tokenizer(audio_16)
             wav, _ = self.s3gen.inference(

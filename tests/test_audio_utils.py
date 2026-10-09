@@ -3,14 +3,18 @@
 The conversion helpers are the seam between ComfyUI's ``AUDIO`` socket and
 Chatterbox's tensor-based entry points, and every mistake on that seam is silent:
 a channel that should have been mixed down sounds phasey, a waveform in the
-wrong rank throws inside the vendor, and a temporary voice-prompt file that
-survives its call is a slow leak of the user's voice on disk.
+wrong rank throws inside the vendor, and a resample to the wrong sample rate
+stretches the speech without any error at all.
 
-The regression this module exists for is :func:`temp_wav_path`. V1 wrote the
-cleanup out by hand at ``nodes.py:181-186`` and ``:246-251``; the second copy
-lived on the error path of a helper that returned ``None`` without ever
-reaching its ``os.remove``. :class:`TestTempWavPath` proves the context manager
-removes the file when the body **raises**, not just when it returns.
+The regression this module exists for is :func:`preprocess_comfy_audio`. V1
+wrote every voice prompt to a temporary ``.wav`` and handed the vendor a path:
+the clip was quantised to 16-bit PCM on the way out, and a run that died
+between the write and the cleanup leaked a file carrying the user's voice into
+the temp directory -- twice, in V1's own history. The vendor's loader now takes
+an in-memory waveform (``load_audio_at``, ``src/chatterbox/models/dsp.py``), so
+the prompt crosses this seam as a mono ``float32`` array and there is no longer
+a file to write, to remove, or to leak. :class:`TestModuleDiscipline` pins that
+the file-writing machinery is gone for good.
 
 Nothing here touches the network or loads a model.
 """
@@ -20,7 +24,6 @@ from __future__ import annotations
 import importlib
 import logging
 import math
-import os
 import random
 
 import numpy as np
@@ -39,7 +42,6 @@ from modules.audio_utils import (
     preprocess_comfy_audio,
     resample_waveform,
     set_seed,
-    temp_wav_path,
     to_comfy_audio,
 )
 
@@ -273,89 +275,6 @@ class TestPreprocess:
 
 
 # ---------------------------------------------------------------------------
-# Temporary files
-# ---------------------------------------------------------------------------
-
-
-class TestTempWavPath:
-    def test_the_path_exists_and_holds_audio(self) -> None:
-        audio = make_audio(channels=2, samples=4800, sample_rate=16000)
-        with temp_wav_path(audio) as path:
-            assert os.path.isfile(path)
-            assert path.endswith(".wav")
-            assert os.path.getsize(path) > 44, "the file carries only a header"
-
-            import soundfile as sf
-
-            samples, rate = sf.read(path)
-            assert rate == 16000
-            assert samples.shape == (4800,)
-
-    def test_the_file_is_removed_on_a_normal_exit(self) -> None:
-        with temp_wav_path(make_audio()) as path:
-            pass
-        assert not os.path.exists(path)
-
-    def test_the_file_is_removed_when_the_body_raises(self) -> None:
-        """The regression: cleanup must not depend on the body succeeding.
-
-        V1's manual ``try``/``finally`` is what this replaces, and the whole
-        point of a context manager is that the ``finally`` is the *only* exit.
-        """
-        captured = {}
-
-        class Boom(Exception):
-            pass
-
-        with pytest.raises(Boom):
-            with temp_wav_path(make_audio()) as path:
-                captured["path"] = path
-                assert os.path.isfile(path)
-                raise Boom("the generation died half way through")
-
-        assert captured["path"], "the body never ran"
-        assert not os.path.exists(captured["path"]), (
-            "the temporary voice prompt survived an exception; every failed run "
-            "would leak a .wav of the user's voice into the temp directory"
-        )
-
-    def test_the_file_is_removed_when_the_write_itself_fails(self, monkeypatch) -> None:
-        """V1's second copy leaked exactly here: ``sf.write`` raised, and the
-        ``except`` returned ``None`` without ever removing the temp file."""
-        import soundfile as sf
-
-        def exploding_write(path, samples, rate):
-            raise OSError("disk full")
-
-        monkeypatch.setattr(sf, "write", exploding_write)
-
-        with pytest.raises(OSError):
-            with temp_wav_path(make_audio()):
-                pytest.fail("the body ran despite a failed write")
-
-    def test_nested_voice_prompts_do_not_collide(self) -> None:
-        first = make_audio(samples=1000)
-        second = make_audio(samples=2000)
-        with temp_wav_path(first) as outer:
-            with temp_wav_path(second) as inner:
-                assert outer != inner
-                assert os.path.isfile(outer) and os.path.isfile(inner)
-            assert not os.path.exists(inner)
-            assert os.path.isfile(outer)
-        assert not os.path.exists(outer)
-
-    def test_empty_audio_is_rejected(self) -> None:
-        with pytest.raises(ValueError, match="empty"):
-            with temp_wav_path({"waveform": torch.zeros(1, 1, 0), "sample_rate": 24000}):
-                pass
-
-    def test_the_file_is_written_as_a_readable_wav(self) -> None:
-        """The suffix is load-bearing: soundfile picks the container from it."""
-        with temp_wav_path(make_audio()) as path:
-            assert path.endswith(".wav")
-
-
-# ---------------------------------------------------------------------------
 # Seeding
 # ---------------------------------------------------------------------------
 
@@ -471,6 +390,28 @@ class TestModuleDiscipline:
             ".setLevel(",
         ):
             assert forbidden not in source, f"audio_utils.py must not use {forbidden}"
+
+    def test_no_temp_file_machinery_remains(self) -> None:
+        """The in-memory handoff, pinned so it cannot quietly come back.
+
+        The deleted :class:`TestTempWavPath` proved the temp file was *removed*
+        -- on the normal path and on the error path, because V1 got both wrong.
+        The stronger guarantee is that there is no file at all: the vendor's
+        loader takes a waveform, so nothing here may import or reference the
+        machinery that used to write the clip out as a 16-bit PCM ``.wav``.
+        """
+        source = self._source(audio_utils)
+        for forbidden in (
+            "temp_wav_path",
+            "tempfile",
+            "soundfile",
+            "sf.write",
+            "os.remove",
+        ):
+            assert forbidden not in source, (
+                f"audio_utils.py references {forbidden}; the voice prompt must "
+                "cross to the vendor as an in-memory array, not a file"
+            )
 
     def test_scrubbing_is_logged_through_the_root_logger(self, caplog) -> None:
         waveform = torch.zeros((1, 1, 64))

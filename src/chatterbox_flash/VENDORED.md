@@ -11,8 +11,24 @@ tree, while the Flash code deliberately imports `S3Gen`, `VoiceEncoder`,
 `T3Cond` and `EnTokenizer` from `chatterbox` — i.e. from this node's patched
 sources, bf16 patches included.
 
-The copy is **unmodified** — there is no patch layer here (compare
-`src/PATCHES.md`, which records the local edits to the vendored `chatterbox`
-tree only). Re-sync by replacing `chatterbox_flash/` with the new version's
-files and updating this file; any future local edit must be recorded in a
-patch manifest before it ships.
+The copy is **not unmodified**. It carries one recorded dependency swap, the
+same one the vendored `chatterbox` tree took (PATCHES.md P-044): the new
+`chatterbox/models/dsp.py` module stands in for librosa and scipy at this
+package's two call sites — `tts.py` loads and resamples the reference clip with
+`load_audio_at`/`resample` (imported at `tts.py:17`), and the evaluation
+script's private `_resample` calls that same `resample` instead of
+`scipy.signal.resample` (imported at `eval/wer_seedtts.py:46`). Both point at
+the patched `chatterbox` tree rather than at a pip package, which is the same
+reason this directory is vendored in the first place; the resampled audio is
+conditioning at generation time and an already-generated clip under evaluation.
+
+The swap cannot be recorded as a row in `src/PATCHES.md`: that manifest's rows
+must name a file under `chatterbox/`, and its coverage walk only looks at
+`src/chatterbox/`, so a `chatterbox_flash/` row would be invisible to the very
+tests that check the manifest. This note is the record, and it has to stay
+exact.
+
+Re-sync by replacing `chatterbox_flash/` with the new version's files and
+updating this file — but re-apply the two import swaps above, which a fresh
+upstream copy will not carry. Any future local edit must be recorded here
+before it ships.

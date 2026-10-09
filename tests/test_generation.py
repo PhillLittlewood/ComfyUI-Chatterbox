@@ -30,6 +30,7 @@ import inspect
 import logging
 import os
 
+import numpy as np
 import pytest
 import torch
 
@@ -37,6 +38,7 @@ from modules import attention_utils
 from modules import generation as generation_module
 from modules import model_registry
 from modules import patcher as patcher_module
+from modules.audio_utils import preprocess_comfy_audio
 from modules.generation import (
     CHATTERBOX_PATCHER_CACHE,
     InterruptProgressBar,
@@ -58,7 +60,15 @@ from modules.patcher import ChatterboxPatcher
 
 
 class StubPack:
-    """Stands in for a loaded ``ChatterboxTTS`` / ``ChatterboxVC``."""
+    """Stands in for a loaded ``ChatterboxTTS`` / ``ChatterboxVC``.
+
+    ``calls`` is the whole record: every argument ``generate`` was handed,
+    including the voice clip. The clip used to arrive as a path to a
+    temporary ``.wav`` that had to exist *during* the call and be gone
+    afterwards -- so the old stub snapshotted the file system mid-call. It now
+    arrives as a mono ``float32`` array, and recording the call is enough:
+    there is no file whose lifetime has to be observed.
+    """
 
     def __init__(self, samples: int = 24000) -> None:
         self.t3 = torch.nn.Linear(4, 4)
@@ -67,17 +77,8 @@ class StubPack:
         self.sr = 24000
         self.samples = samples
         self.calls: list[dict] = []
-        #: ``(path, existed)`` for every path handed to ``generate`` -- recorded
-        #: *during* the call, because the temp file is gone by the time the
-        #: caller gets control back.
-        self.paths_at_call: list[tuple[str, bool]] = []
 
     def generate(self, *args, **kwargs) -> torch.Tensor:
-        candidates = [a for a in args if isinstance(a, str) and a.endswith(".wav")]
-        candidates += [
-            v for v in kwargs.values() if isinstance(v, str) and v.endswith(".wav")
-        ]
-        self.paths_at_call = [(path, os.path.isfile(path)) for path in candidates]
         self.calls.append({"args": list(args), **kwargs})
         return torch.zeros((1, self.samples))
 
@@ -92,6 +93,25 @@ class InterruptingPack(StubPack):
     def generate(self, *args, **kwargs) -> torch.Tensor:
         super().generate(*args, **kwargs)
         raise self.error
+
+
+def assert_in_memory_clip(value, expected_length: int, label: str) -> None:
+    """The voice clip reached the vendor as a waveform, not a file path.
+
+    ``expected_length`` also pins the sample rate the node resampled to: a
+    clip handed over at the wrong rate is indistinguishable from a working
+    run by any other means -- it just sounds stretched.
+    """
+    assert isinstance(value, np.ndarray), (
+        f"{label} was handed over as {type(value).__name__}, not an in-memory "
+        "waveform; the temporary-file path is back"
+    )
+    assert value.dtype == np.float32
+    assert value.ndim == 1, f"{label} came back with shape {value.shape}"
+    assert value.shape[0] == expected_length, (
+        f"{label} is {value.shape[0]} samples long, expected {expected_length} "
+        "-- it was resampled to the wrong rate"
+    )
 
 
 class FakeModelManagement:
@@ -499,32 +519,46 @@ class TestGenerateAudio:
         assert call["max_new_tokens"] == 512
         assert call["flow_cfg_scale"] == 0.6
         assert call["watermark"] is True
-        assert model.paths_at_call, "no path was handed to the model at all"
-        assert all(existed for _path, existed in model.paths_at_call), (
-            f"the voice prompt file did not exist while generate() ran: "
-            f"{model.paths_at_call}"
+        assert_in_memory_clip(
+            call["audio_prompt_path"], 2400, "the voice prompt"
         )
 
-    def test_the_voice_prompt_file_is_gone_afterwards(self) -> None:
+    def test_the_prompt_is_handed_over_with_no_file_behind_it(self) -> None:
+        """The in-memory handoff, on the success path *and* the failure path.
+
+        V1 wrote the prompt to a temp ``.wav``; a run that died between the
+        write and the cleanup leaked a file carrying the user's voice, and V1
+        got that cleanup wrong twice. The clip now crosses as a ``float32``
+        array, so a failed run has nothing to clean up -- there is no file to
+        remove, and therefore no cleanup to get wrong. The structural half of
+        the guarantee (nothing on the node side may write that file at all)
+        is pinned by ``TestModuleDiscipline`` in ``tests/test_audio_utils.py``.
+        """
         model = StubPack()
         generate_audio(model, "hello", audio_prompt=audio())
-        assert not os.path.exists(model.calls[0]["audio_prompt_path"])
+        assert_in_memory_clip(
+            model.calls[0]["audio_prompt_path"], 2400, "the voice prompt"
+        )
 
-    def test_the_voice_prompt_file_is_gone_after_a_failure(self) -> None:
         class Exploding(StubPack):
             def generate(self, *args, **kwargs):
                 self.calls.append({"args": list(args), **kwargs})
                 raise RuntimeError("boom")
 
-        model = Exploding()
+        failing = Exploding()
         with pytest.raises(RuntimeError):
-            generate_audio(model, "hello", audio_prompt=audio())
-        assert not os.path.exists(model.calls[0]["audio_prompt_path"])
+            generate_audio(failing, "hello", audio_prompt=audio())
+        assert_in_memory_clip(
+            failing.calls[0]["audio_prompt_path"], 2400, "the voice prompt"
+        )
 
-    def test_no_voice_prompt_means_no_path(self) -> None:
+    def test_no_voice_prompt_means_no_clip(self) -> None:
+        """No clip connected: the vendor gets ``None`` and answers with the
+        pack's built-in voice."""
         model = StubPack()
         generate_audio(model, "hello")
         assert model.calls[0]["audio_prompt_path"] is None
+        assert preprocess_comfy_audio(None) is None
 
     def test_watermarking_defaults_off(self) -> None:
         model = StubPack()
@@ -706,22 +740,31 @@ class TestVoiceConversion:
         assert rate == 24000
         call = model.calls[0]
         assert call["n_timesteps"] == 4
-        assert model.paths_at_call, "no path was handed to the model at all"
-        assert all(existed for _path, existed in model.paths_at_call), (
-            f"the source clip was not on disk while generate() ran: "
-            f"{model.paths_at_call}"
-        )
+        # The source crosses at the tokenizer's 16 kHz: 2400 samples at
+        # 24 kHz make 1600 at 16 kHz. No target clip is connected, so the
+        # vendor falls back to the pack's own ``conds.pt``.
+        assert_in_memory_clip(call["args"][0], 1600, "the conversion source")
         assert call["target_voice_path"] is None
 
-    def test_the_target_voice_is_written_to_disk_for_the_call(self) -> None:
-        model = StubPack()
-        convert_voice_audio(model, audio(), target_voice_audio=audio(samples=1200))
+    def test_the_two_clips_cross_at_their_own_sample_rates(self) -> None:
+        """The only dual-rate call site in the tree.
 
-        assert len(model.paths_at_call) == 2, "both clips should be written out"
-        assert all(existed for _path, existed in model.paths_at_call)
-        assert not os.path.exists(model.calls[0]["target_voice_path"]), (
-            "the target voice clip survived the call"
+        ``vc.generate`` loads the *source* through the tokenizer's 16 kHz path
+        and the *target* voice through ``set_target_voice`` at S3Gen's 24 kHz.
+        A second at 24 kHz is 16 000 samples at 16 kHz, and a second at 16 kHz
+        is 24 000 samples at 24 kHz, so the lengths alone tell the two rates
+        apart: swapping them would silently stretch one of the clips.
+        """
+        model = StubPack()
+        convert_voice_audio(
+            model,
+            audio(samples=24000, sample_rate=24000),
+            target_voice_audio=audio(samples=16000, sample_rate=16000),
         )
+
+        call = model.calls[0]
+        assert_in_memory_clip(call["args"][0], 16000, "the conversion source")
+        assert_in_memory_clip(call["target_voice_path"], 24000, "the target voice")
 
     @pytest.mark.parametrize(
         "empty", [None, {}, {"waveform": None}, {"waveform": torch.zeros(1, 1, 0)}]

@@ -3,7 +3,6 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
-import librosa
 import torch
 
 # PATCHED (src/PATCHES.md P-026): `perth` (the optional watermarking library) is
@@ -28,6 +27,7 @@ from safetensors.torch import load_file
 from huggingface_hub import snapshot_download
 from transformers import AutoTokenizer
 
+from .models.dsp import load_audio_at, resample
 from .models.t3 import T3
 from .models.s3tokenizer import S3_SR
 from .models.s3gen import S3GEN_SR, S3Gen
@@ -341,15 +341,15 @@ class ChatterboxTurboTTS:
         return wav
 
     def prepare_conditionals(self, wav_fpath, exaggeration=0.5, norm_loudness=True):
-        ## Load and norm reference wav
-        s3gen_ref_wav, _sr = librosa.load(wav_fpath, sr=S3GEN_SR)
+        ## Load and norm reference wav -- path, in-memory waveform, or tensor (P-039)
+        s3gen_ref_wav = load_audio_at(wav_fpath, S3GEN_SR)
 
-        assert len(s3gen_ref_wav) / _sr > 5.0, "Audio prompt must be longer than 5 seconds!"
+        assert len(s3gen_ref_wav) / S3GEN_SR > 5.0, "Audio prompt must be longer than 5 seconds!"
 
         if norm_loudness:
-            s3gen_ref_wav = self.norm_loudness(s3gen_ref_wav, _sr)
+            s3gen_ref_wav = self.norm_loudness(s3gen_ref_wav, S3GEN_SR)
 
-        ref_16k_wav = librosa.resample(s3gen_ref_wav, orig_sr=S3GEN_SR, target_sr=S3_SR)
+        ref_16k_wav = resample(s3gen_ref_wav, S3GEN_SR, S3_SR)
 
         s3gen_ref_wav = s3gen_ref_wav[:self.DEC_COND_LEN]
         s3gen_ref_dict = self.s3gen.embed_ref(s3gen_ref_wav, S3GEN_SR, device=self.device)
@@ -386,7 +386,10 @@ class ChatterboxTurboTTS:
         # PATCHED (src/PATCHES.md P-026): opt out of watermarking entirely.
         watermark=True,
     ):
-        if audio_prompt_path:
+        # PATCHED (src/PATCHES.md P-041): `is not None`, not a truth test — a
+        # reference clip handed in as a multi-element ndarray raises
+        # `ValueError: The truth value of an array ... is ambiguous` here.
+        if audio_prompt_path is not None:
             self.prepare_conditionals(audio_prompt_path, exaggeration=exaggeration, norm_loudness=norm_loudness)
         else:
             assert self.conds is not None, "Please `prepare_conditionals` first or specify `audio_prompt_path`"

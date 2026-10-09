@@ -74,11 +74,11 @@ EXPECTED_FILE_HASHES: dict[str, str] = {
     "chatterbox/models/voice_encoder/__init__.py": "a3326161831fee10ffbfa5f5eb5dbd0e43172a92f342fb645ac5db8e0d5bcda7",
     "chatterbox/models/voice_encoder/config.py": "e64be6d97b000392427a0b243dd41741888d767b96a79961a63039ffd1b2b95c",
     "chatterbox/models/voice_encoder/melspec.py": "48eac0438247730bcbf20c36098bf0fba5483e7a8f8101dbeb02cd18bb8cae49",
-    "chatterbox/models/voice_encoder/voice_encoder.py": "9583825f6b7b5c9cf7ec93c65172fdcb1a0622d8196db65b6a966e02e4f09fc9",
-    "chatterbox/mtl_tts.py": "f97ff6be9ab17cf384db1b13b9dacafa513474a9d3bb469c84c6364e8787f9e6",
-    "chatterbox/tts.py": "d05eaa7eda086b3c72c353a230d9404621e0482c560c87599b04420a0c9fd83b",
-    "chatterbox/tts_turbo.py": "2a47a2f160de6389cc42933fe0bc46e37e0362925c0ea6b7c49a51fceba64666",
-    "chatterbox/vc.py": "8a8ac8e30e05ffc3847f04231ff034f72fd9058e600f12f199616b4dd32e2f4d",
+    "chatterbox/models/voice_encoder/voice_encoder.py": "7a646a3429fb2297363add0cdd0ad18e3c296c02a1c8878a39cc038d10d2ccf4",
+    "chatterbox/mtl_tts.py": "67ac5cf77b41a2928df02294fcfc61826f3288e250fd5764a6b449344d678738",
+    "chatterbox/tts.py": "4824c3b1a5c73d6819250414a19fe1419913ac1f5a6fca6533ee26eaf4322998",
+    "chatterbox/tts_turbo.py": "538d95f0733b148bb273027f1f462beed6c79886e79666ece40fba7c5d4514b8",
+    "chatterbox/vc.py": "fac30e2ca3c063ed7da1e7ec9081a42ad70946b2d802a7597f2df4b3c0780c64",
 }
 
 #: Files added by this re-sync; a regression here means someone restored the
@@ -180,16 +180,22 @@ class TestDeadCodeRemoved:
         assert not offenders, f"dead analyzer still referenced in: {offenders}"
 
 
-#: Dependencies this node deliberately does not ship. Both were dead imports
-#: removed outright in an earlier round.
-DEAD_DEPENDENCIES = frozenset({"conformer", "omegaconf"})
+#: Dependencies this node deliberately does not ship. The first two were dead
+#: imports removed outright; the rest is the featurization swap -- librosa and
+#: scipy are reimplemented in ``models/dsp.py`` instead of imported.
+DEAD_DEPENDENCIES = frozenset({"conformer", "omegaconf", "scipy", "librosa", "sklearn"})
 
 
 class TestNoDeadDependencies:
-    """conformer and omegaconf were dead imports; nothing may pull them back.
+    """Dead imports stay dead: nothing in the vendor may pull them back.
 
     The suite mocks the vendored tree at collection time, so a reintroduced
     import would not fail there -- this scan reads the source and would.
+
+    The scan is AST-based, never a substring match: ``models/dsp.py`` is a
+    librosa reimplementation whose prose names librosa (and scipy, via the
+    ``get_window`` mirror) at several lines. A text scan would flag the very
+    module that removed the dependency.
     """
 
     @pytest.mark.parametrize("dependency", sorted(DEAD_DEPENDENCIES))

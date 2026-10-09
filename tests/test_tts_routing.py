@@ -12,6 +12,7 @@ whole family. The pieces that make that safe:
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 import torch
 
@@ -492,7 +493,20 @@ class TestFlashRoutingAndDispatch:
         )
         assert rate == 24000 and waveform.shape == (1, 24000)
         assert model.cond_calls[0]["exaggeration"] == 0.7
-        assert model.cond_calls[0]["path"].endswith(".wav")
+        # The reference clip reaches conditioning as an in-memory waveform
+        # (P-039/P-044): the vendored loader takes a tensor, so there is no
+        # temporary .wav any more -- just 24 000 mono float32 samples at
+        # S3GEN_SAMPLE_RATE, the rate every conditioning path wants.
+        prompt = model.cond_calls[0]["path"]
+        assert isinstance(prompt, np.ndarray), (
+            f"the reference clip was handed over as {type(prompt).__name__}, "
+            "not an in-memory waveform; the temporary-file path is back"
+        )
+        assert prompt.dtype == np.float32
+        assert prompt.shape == (24000,), (
+            "the clip was resampled to the wrong rate -- one second at 24 kHz "
+            f"is 24 000 samples, it came back {prompt.shape[0]}"
+        )
         call = model.calls[0]
         assert call["exaggeration"] == 0.7
         assert call["temperature"] == 0.6

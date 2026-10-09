@@ -41,9 +41,9 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
-import scipy.signal
 import soundfile as sf
 import torch
+from chatterbox.models.dsp import resample as dsp_resample
 from tqdm import tqdm
 
 try:
@@ -120,8 +120,7 @@ def _post_process_whisper_norm(text: str) -> str:
 def _resample(wav: np.ndarray, src_sr: int, target_sr: int = 16000) -> np.ndarray:
     if src_sr == target_sr:
         return wav
-    n_target = int(round(len(wav) * target_sr / src_sr))
-    return scipy.signal.resample(wav, n_target)
+    return dsp_resample(wav, src_sr, target_sr)
 
 
 def _transcribe(wav_path: str) -> str:

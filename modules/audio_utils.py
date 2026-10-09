@@ -9,31 +9,27 @@ consume -- and back again -- lives here, in one place:
 * :func:`comfy_audio_to_numpy` / :func:`numpy_to_comfy_audio` -- ``AUDIO`` <->
   numpy.
 * :func:`preprocess_comfy_audio` -- the whole chain, resampled and scrubbed,
-  in one call.
-* :func:`temp_wav_path` -- a context manager handing Chatterbox a real ``.wav``
-  file path and **guaranteeing** the file is deleted, including when the body
-  raises. The V1 nodes wrote that by hand in two ``try``/``finally`` blocks
-  (``nodes.py:181-186`` and ``:246-251``), one of which was on the error path
-  of a function that returned ``None`` without ever removing anything.
+  in one call. What it returns is handed straight to the vendored
+  ``generate(audio_prompt_path=...)``: the vendor's loader accepts an
+  in-memory waveform (``load_audio_at`` in ``src/chatterbox/models/dsp.py``),
+  so no temporary ``.wav`` is ever written -- and the PCM_16 quantization a
+  file round-trip imposed is gone with it.
 * :func:`set_seed` -- the seeding routine that replaces the deleted
   ``set_chatterbox_seed``.
 * :func:`check_for_interrupt` -- a cooperative cancellation poll.
 
 ``comfy.model_management`` is reached through
 :func:`modules.device_utils._get_model_management`, never imported at module
-scope, so this module is importable without ComfyUI booted. ``torchaudio`` and
-``soundfile`` are imported inside the functions that need them: neither is a
-node-load-time cost, and both are heavier than the rest of the module.
+scope, so this module is importable without ComfyUI booted. ``torchaudio`` is
+imported inside the function that needs it: it is not a node-load-time cost,
+and it is heavier than the rest of the module.
 """
 
 from __future__ import annotations
 
-import contextlib
 import logging
-import os
 import random
-import tempfile
-from typing import Iterator, Optional, Union
+from typing import Optional, Union
 
 import numpy as np
 import torch
@@ -42,6 +38,7 @@ from .device_utils import _get_model_management
 
 __all__ = [
     "S3GEN_SAMPLE_RATE",
+    "S3_TOKENIZER_SAMPLE_RATE",
     "set_seed",
     "check_for_interrupt",
     "interrupt_exception_class",
@@ -52,7 +49,6 @@ __all__ = [
     "comfy_audio_to_numpy",
     "numpy_to_comfy_audio",
     "preprocess_comfy_audio",
-    "temp_wav_path",
 ]
 
 
@@ -60,6 +56,15 @@ __all__ = [
 # (``src/chatterbox/models/s3gen/const.py::S3GEN_SR``). Reference audio is
 # resampled to it so the tokenizer's token-rate and mel-rate invariants hold.
 S3GEN_SAMPLE_RATE = 24000
+
+
+# The S3 tokenizer consumes its clip at 16 kHz
+# (``src/chatterbox/models/s3tokenizer/s3tokenizer.py::S3_SR``). Only voice
+# conversion's *source* clip needs it -- everything the models condition on
+# arrives at ``S3GEN_SAMPLE_RATE``. The value is redeclared here rather than
+# imported: the vendored tree is never this module's dependency, and
+# ``modules/generation.py`` says why that holds for the node layer too.
+S3_TOKENIZER_SAMPLE_RATE = 16000
 
 
 # ---------------------------------------------------------------------------
@@ -387,76 +392,3 @@ def preprocess_comfy_audio(
         samples = samples / peak
 
     return np.ascontiguousarray(samples, dtype=np.float32)
-
-
-# ---------------------------------------------------------------------------
-# Temporary files
-# ---------------------------------------------------------------------------
-
-
-@contextlib.contextmanager
-def temp_wav_path(audio: Union[dict, torch.Tensor]) -> Iterator[str]:
-    """Write ``audio`` to a temporary ``.wav`` and hand back its path.
-
-    Chatterbox's ``ChatterboxTTS.generate`` / ``ChatterboxVC.generate`` take a
-    *file path* for the voice prompt and read it back with ``librosa`` -- they
-    cannot be handed a tensor. This is the only place in the codebase that
-    creates that file.
-
-    Cleanup lives in a ``finally``, so an exception raised by the body removes
-    the file exactly like the normal exit does. The V1 nodes had two copies of
-    this cleanup by hand and the one on the error path never ran its ``os.remove``
-    when the write itself failed.
-
-    Args:
-        audio: A ComfyUI ``AUDIO`` dict, or a bare ``[C, T]`` waveform tensor
-            (the sample rate must then already be ``S3GEN_SAMPLE_RATE``).
-
-    Yields:
-        The absolute path of the written file.
-
-    Raises:
-        ValueError: The audio carries no samples.
-        RuntimeError: ``soundfile`` could not be imported.
-    """
-    mono = downmix_to_mono(extract_waveform(audio, name="voice prompt"))
-    if mono.numel() == 0:
-        raise ValueError("voice prompt: the waveform is empty")
-
-    sample_rate = S3GEN_SAMPLE_RATE
-    if isinstance(audio, dict):
-        sample_rate = int(audio.get("sample_rate") or S3GEN_SAMPLE_RATE)
-
-    # Always .wav: the suffix is not cosmetic, it is how soundfile picks the
-    # container and how librosa picks the decoder on the way back.
-    handle = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-    path = handle.name
-    handle.close()
-
-    try:
-        try:
-            import soundfile as sf
-        except Exception as exc:  # pragma: no cover - soundfile ships with ComfyUI
-            raise RuntimeError(
-                "Writing a voice-prompt file requires soundfile, which could not "
-                f"be imported: {exc}"
-            ) from exc
-
-        samples = (
-            mono.detach()
-            .to(device="cpu", dtype=torch.float32)
-            .numpy()
-            .reshape(-1)
-        )
-        sf.write(path, samples, sample_rate)
-        yield path
-    finally:
-        try:
-            os.remove(path)
-        except OSError as exc:
-            logging.debug(
-                "[Chatterbox TTS] Could not remove the temporary voice-prompt file "
-                "'%s': %s",
-                path,
-                exc,
-            )

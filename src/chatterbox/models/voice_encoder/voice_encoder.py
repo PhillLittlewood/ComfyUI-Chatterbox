@@ -4,11 +4,11 @@ from typing import List, Union, Optional
 
 import numpy as np
 from numpy.lib.stride_tricks import as_strided
-import librosa
 import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
 
+from ..dsp import resample, trim_silence
 from .config import VoiceEncConfig
 from .melspec import melspectrogram
 
@@ -258,13 +258,10 @@ class VoiceEncoder(nn.Module):
         :param trim_top_db: this argument was only added for the sake of compatibility with metavoice's implementation
         """
         if sample_rate != self.hp.sample_rate:
-            wavs = [
-                librosa.resample(wav, orig_sr=sample_rate, target_sr=self.hp.sample_rate, res_type="kaiser_fast")
-                for wav in wavs
-            ]
+            wavs = [resample(wav, sample_rate, self.hp.sample_rate) for wav in wavs]
 
         if trim_top_db:
-            wavs = [librosa.effects.trim(wav, top_db=trim_top_db)[0] for wav in wavs]
+            wavs = [trim_silence(wav, top_db=trim_top_db) for wav in wavs]
 
         if "rate" not in kwargs:
             kwargs["rate"] = 1.3  # Resemble's default value.

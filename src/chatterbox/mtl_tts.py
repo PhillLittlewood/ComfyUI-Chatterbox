@@ -3,7 +3,6 @@ from pathlib import Path
 import logging
 import os
 
-import librosa
 import torch
 import torch.nn.functional as F
 from safetensors.torch import load_file as load_safetensors
@@ -18,6 +17,7 @@ try:
 except ImportError:
     perth = None
 
+from .models.dsp import load_audio_at, resample
 from .models.t3 import T3
 from .models.t3.modules.t3_config import T3Config
 from .models.s3tokenizer import S3_SR, S3_TOKEN_RATE, drop_invalid_tokens
@@ -383,10 +383,10 @@ class ChatterboxMultilingualTTS:
         return cls.from_local(ckpt_dir, device, t3_model=t3_model)
     
     def prepare_conditionals(self, wav_fpath, exaggeration=0.5):
-        ## Load reference wav
-        s3gen_ref_wav, _sr = librosa.load(wav_fpath, sr=S3GEN_SR)
+        ## Load reference wav -- path, in-memory waveform, or tensor (P-039)
+        s3gen_ref_wav = load_audio_at(wav_fpath, S3GEN_SR)
 
-        ref_16k_wav = librosa.resample(s3gen_ref_wav, orig_sr=S3GEN_SR, target_sr=S3_SR)
+        ref_16k_wav = resample(s3gen_ref_wav, S3GEN_SR, S3_SR)
 
         s3gen_ref_wav = s3gen_ref_wav[:self.DEC_COND_LEN]
         s3gen_ref_dict = self.s3gen.embed_ref(s3gen_ref_wav, S3GEN_SR, device=self.device)
@@ -431,7 +431,10 @@ class ChatterboxMultilingualTTS:
                 f"Supported languages: {supported_langs}"
             )
         
-        if audio_prompt_path:
+        # PATCHED (src/PATCHES.md P-040): `is not None`, not a truth test — a
+        # reference clip handed in as a multi-element ndarray raises
+        # `ValueError: The truth value of an array ... is ambiguous` here.
+        if audio_prompt_path is not None:
             self.prepare_conditionals(audio_prompt_path, exaggeration=exaggeration)
         else:
             assert self.conds is not None, "Please `prepare_conditionals` first or specify `audio_prompt_path`"
