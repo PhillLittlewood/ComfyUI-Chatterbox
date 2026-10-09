@@ -37,6 +37,6 @@ Repository = "https://github.com/wildminder/ComfyUI-Chatterbox"
 
 [tool.comfy]
 PublisherId = "wildai"
-DisplayName = "Chatterbox TTS"
+DisplayName = "Chatterbox TTS Revised"
 Icon = ""
 requires-comfyui = ">=0.37.0"

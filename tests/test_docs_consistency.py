@@ -332,7 +332,7 @@ class TestReadmeClaimsMatchTheCode:
     def test_the_absence_of_pins_is_explained(self, readme: str) -> None:
         """Not just asserted -- a reader who wants to add a pin must find out
         why there isn't one."""
-        body = _section(readme, "### Why there are no version pins").lower()
+        body = _section(readme, "## ⌗ Good to know").lower()
         assert body, "the README must have a section explaining the missing pins"
         assert "manager" in body, "the rationale must name ComfyUI Manager"
         assert "downgrade" in body, (
@@ -340,8 +340,8 @@ class TestReadmeClaimsMatchTheCode:
         )
 
     def test_offline_behaviour_is_documented(self, readme: str) -> None:
-        body = _section(readme, "### Offline behaviour").lower()
-        assert body, "the README must have an offline-behaviour section"
+        body = _section(readme, "## ⌗ Good to know").lower()
+        assert body, "the README must document offline behaviour"
         assert "re-downloaded" in body, (
             "the guarantee is that a local pack is never fetched again"
         )
@@ -351,8 +351,8 @@ class TestReadmeClaimsMatchTheCode:
         )
 
     def test_vram_behaviour_is_documented(self, readme: str) -> None:
-        body = _section(readme, "### VRAM characteristics").lower()
-        assert body, "the README must have a VRAM section"
+        body = _section(readme, "## ⌗ Good to know").lower()
+        assert body, "the README must document VRAM behaviour"
         assert "offload" in body
         assert "safetensors" in body, (
             "the size is measured from the on-disk weights; saying so is what "
@@ -360,15 +360,15 @@ class TestReadmeClaimsMatchTheCode:
         )
 
     def test_the_migration_note_names_both_directories(self, readme: str) -> None:
-        body = _section(readme, "## Migrating from 1.x", span=4000)
-        assert body, "the README must have a migration section"
+        body = _section(readme, "## ⌗ Good to know", span=4000)
+        assert body, "the README must have a migration note"
         assert "models/chatterbox_tts/" in body, (
             "the note must name the directory the user has to delete"
         )
         assert "models/tts/chatterbox/" in body, "and the directory it moved to"
 
     def test_the_migration_note_says_delete_it_by_hand(self, readme: str) -> None:
-        body = _section(readme, "## Migrating from 1.x", span=4000).lower()
+        body = _section(readme, "## ⌗ Good to know", span=4000).lower()
         assert "no compatibility shim is provided" in body, (
             "the default is a manual-delete instruction; the README must say so "
             "rather than leaving the user to discover it"
