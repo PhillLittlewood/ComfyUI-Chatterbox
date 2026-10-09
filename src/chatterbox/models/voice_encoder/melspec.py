@@ -1,14 +1,14 @@
 from functools import lru_cache
 
-from scipy import signal
 import numpy as np
-import librosa
+
+from .. import dsp
 
 
 @lru_cache()
 def mel_basis(hp):
     assert hp.fmax <= hp.sample_rate // 2
-    return librosa.filters.mel(
+    return dsp.mel_filterbank(
         sr=hp.sample_rate,
         n_fft=hp.n_fft,
         n_mels=hp.num_mels,
@@ -18,7 +18,7 @@ def mel_basis(hp):
 
 def preemphasis(wav, hp):
     assert hp.preemphasis != 0
-    wav = signal.lfilter([1, -hp.preemphasis], [1], wav)
+    wav = dsp.preemphasis(wav, coef=hp.preemphasis)
     wav = np.clip(wav, -1, 1)
     return wav
 
@@ -52,9 +52,9 @@ def melspectrogram(wav, hp, pad=True):
 
 
 def _stft(y, hp, pad=True):
-    # NOTE: after 0.8, pad mode defaults to constant, setting this to reflect for
-    #   historical consistency and streaming-version consistency
-    return librosa.stft(
+    # librosa.stft mirror in models/dsp.py; reflect kept for historical
+    # consistency with the pretrained featurization
+    return dsp.stft(
         y,
         n_fft=hp.n_fft,
         hop_length=hp.hop_size,

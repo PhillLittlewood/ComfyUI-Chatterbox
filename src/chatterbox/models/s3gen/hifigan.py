@@ -19,7 +19,7 @@
 
 from typing import Dict, Optional, List
 import numpy as np
-from scipy.signal import get_window
+from ..dsp import hann_window
 import torch
 import torch.nn.functional as F
 from torch.nn import Conv1d
@@ -376,7 +376,7 @@ class HiFTGenerator(nn.Module):
         self.ups.apply(init_weights)
         self.conv_post.apply(init_weights)
         self.reflection_pad = nn.ReflectionPad1d((1, 0))
-        self.stft_window = torch.from_numpy(get_window("hann", istft_params["n_fft"], fftbins=True).astype(np.float32))
+        self.stft_window = torch.from_numpy(hann_window(istft_params["n_fft"]).astype(np.float32))
         self.f0_predictor = f0_predictor
 
     def remove_weight_norm(self):

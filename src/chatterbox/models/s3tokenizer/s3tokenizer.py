@@ -1,9 +1,9 @@
 from typing import List, Tuple
 
 import numpy as np
-import librosa
 import torch
 import torch.nn.functional as F
+from ..dsp import mel_filterbank
 from s3tokenizer.utils import padding
 from s3tokenizer.model_v2 import (
     S3TokenizerV2,
@@ -36,7 +36,7 @@ class S3Tokenizer(S3TokenizerV2):
         super().__init__(name)
 
         self.n_fft = 400
-        _mel_filters = librosa.filters.mel(
+        _mel_filters = mel_filterbank(
             sr=S3_SR,
             n_fft=self.n_fft,
             n_mels=config.n_mels

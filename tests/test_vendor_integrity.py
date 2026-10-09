@@ -25,10 +25,11 @@ from conftest import ROOT_DIR
 VENDOR_DIR = os.path.join(ROOT_DIR, "src", "chatterbox")
 
 #: The vendored tree, exactly as re-synced from upstream v0.1.7 plus the patch
-#: layer recorded in ``src/PATCHES.md``. 51 files.
+#: layer recorded in ``src/PATCHES.md``. 52 files.
 EXPECTED_FILE_HASHES: dict[str, str] = {
     "chatterbox/__init__.py": "fd8c522e8a260eb116cbf6a14d64b25b755daa4a2102c21419ec541cd26568e0",
     "chatterbox/models/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "chatterbox/models/dsp.py": "4cac76665b61318320de5ff5ce567b865f852310bf53112baa6badc0d21f9595",
     "chatterbox/models/s3gen/__init__.py": "cdfafe103f5757b42bd813a1553eb481d9ea631eba34c42129399974e14a23cc",
     "chatterbox/models/s3gen/configs.py": "d5af249710db6d8bb0a3e69b03835e4e2ef20fc135d84289c13e14139868a8a0",
     "chatterbox/models/s3gen/const.py": "4e330bdc6b632afb12edb845818ffe2bf7f13441dee4d69bd74014093985fa6b",
@@ -36,7 +37,7 @@ EXPECTED_FILE_HASHES: dict[str, str] = {
     "chatterbox/models/s3gen/f0_predictor.py": "829f58100879516a1eea93b09c62afcf16c452795a90e76e1bb700e2db606d3f",
     "chatterbox/models/s3gen/flow.py": "7cb6b160e489b6f0ef5da7ce380db0230bd815857be4b3f33007b0290960855a",
     "chatterbox/models/s3gen/flow_matching.py": "f5a0d68d1a00c59e3449bbe6984647eea497619405e39ff4578715bf0cae8e05",
-    "chatterbox/models/s3gen/hifigan.py": "0f9adcf24117e504027a515ffa1bf2a42d5f851f4a1a79665af24f39f8660a5b",
+    "chatterbox/models/s3gen/hifigan.py": "ca96f28d1982e4d766bbb1e5a4f35ef6f5930e00f649b8167dc1193f9f9b2024",
     "chatterbox/models/s3gen/matcha/_diffusers_compat.py": "d5a6c233b241ec4e77ba79b7c41f52d0f285fe12e163be90145449fae68d24d7",
     "chatterbox/models/s3gen/matcha/decoder.py": "8deb3683d2b3081de91f0f346bbb8d0557a32f1ce0014348fa163156ecf83a91",
     "chatterbox/models/s3gen/matcha/flow_matching.py": "f3cdc60a786a722ec1b3bf9b12b566452a41fbe563636b71ed87b422631f36d9",
@@ -55,10 +56,10 @@ EXPECTED_FILE_HASHES: dict[str, str] = {
     "chatterbox/models/s3gen/utils/class_utils.py": "b0605ec5cb1e1fbadbcc24c488ad6ca8eff3e18f5f460edd0b3027b2de1f6aed",
     "chatterbox/models/s3gen/utils/intmeanflow.py": "09f94d16a7aa8cc42ee2aff09d69fcd3ea503f1a5e69fca03d3f0786ef172b05",
     "chatterbox/models/s3gen/utils/mask.py": "0f4a0779b3ee6b70d209b630c4798cee99165560010afe3e0b275dd2105a4209",
-    "chatterbox/models/s3gen/utils/mel.py": "e603d99fa827eb84b8bd3df3aef5e1e567b187ab06d02ba440e2afa0eac502b2",
+    "chatterbox/models/s3gen/utils/mel.py": "29bf4106039429a326bc4798fa51889b36f53ea37b00e5f3fac7307a264e7493",
     "chatterbox/models/s3gen/xvector.py": "13d6b473ce7a066c2b6ddd14893e7834e9a5705cc35383adf25c5b1947125bb7",
     "chatterbox/models/s3tokenizer/__init__.py": "fa602db9e952f86943274bacd0c5b126415938e268536b8dc551aeb0aa924bc1",
-    "chatterbox/models/s3tokenizer/s3tokenizer.py": "8da30a6d978b5071761899d913b31f1fe9ae766a07c316a970b529cfcd0f0aa4",
+    "chatterbox/models/s3tokenizer/s3tokenizer.py": "f5268c66bfb41a868c2f142489ca4ca7b9260ba3bb7c09b5fbe7d3766764a578",
     "chatterbox/models/t3/__init__.py": "9d4af45d74fc3c0ebef3e875d597aee3dff31e22d585385dc9567427a638e442",
     "chatterbox/models/t3/inference/t3_hf_backend.py": "98ed48dfd7e671d8953a0ea13e003ee16aaf39e8e3228799076ef08eaadc3403",
     "chatterbox/models/t3/llama_configs.py": "ab1bb91f7be9732e210b2e3e08aab3a71d31bd63aa5bdfc68bbb8fbb92b37a0c",
@@ -72,7 +73,7 @@ EXPECTED_FILE_HASHES: dict[str, str] = {
     "chatterbox/models/utils.py": "e35c9893b029d44e7caeb288cf4b6c836aa3b916e7529dc3a1444adfd34ab054",
     "chatterbox/models/voice_encoder/__init__.py": "a3326161831fee10ffbfa5f5eb5dbd0e43172a92f342fb645ac5db8e0d5bcda7",
     "chatterbox/models/voice_encoder/config.py": "e64be6d97b000392427a0b243dd41741888d767b96a79961a63039ffd1b2b95c",
-    "chatterbox/models/voice_encoder/melspec.py": "d3d61bf55a5a3aead1a436c3d99fc0ec822c3bced6fc1b932e83605d3775bc9f",
+    "chatterbox/models/voice_encoder/melspec.py": "48eac0438247730bcbf20c36098bf0fba5483e7a8f8101dbeb02cd18bb8cae49",
     "chatterbox/models/voice_encoder/voice_encoder.py": "9583825f6b7b5c9cf7ec93c65172fdcb1a0622d8196db65b6a966e02e4f09fc9",
     "chatterbox/mtl_tts.py": "f97ff6be9ab17cf384db1b13b9dacafa513474a9d3bb469c84c6364e8787f9e6",
     "chatterbox/tts.py": "d05eaa7eda086b3c72c353a230d9404621e0482c560c87599b04420a0c9fd83b",
@@ -110,8 +111,8 @@ def sha256(rel_file: str) -> str:
 
 
 class TestVendorFileSet:
-    def test_expected_count_is_fifty_one(self) -> None:
-        assert len(EXPECTED_FILE_HASHES) == 51
+    def test_expected_count_is_fifty_two(self) -> None:
+        assert len(EXPECTED_FILE_HASHES) == 52
 
     def test_vendor_dir_exists(self) -> None:
         assert os.path.isdir(VENDOR_DIR), f"missing vendored tree at {VENDOR_DIR}"
@@ -179,6 +180,11 @@ class TestDeadCodeRemoved:
         assert not offenders, f"dead analyzer still referenced in: {offenders}"
 
 
+#: Dependencies this node deliberately does not ship. Both were dead imports
+#: removed outright in an earlier round.
+DEAD_DEPENDENCIES = frozenset({"conformer", "omegaconf"})
+
+
 class TestNoDeadDependencies:
     """conformer and omegaconf were dead imports; nothing may pull them back.
 
@@ -186,7 +192,8 @@ class TestNoDeadDependencies:
     import would not fail there -- this scan reads the source and would.
     """
 
-    def test_no_conformer_or_omegaconf_imports(self) -> None:
+    @pytest.mark.parametrize("dependency", sorted(DEAD_DEPENDENCIES))
+    def test_no_dead_dependency_imports(self, dependency: str) -> None:
         offenders: list[str] = []
         for rel_file in vendor_files():
             path = os.path.join(VENDOR_DIR, rel_file[len("chatterbox/"):].replace("/", os.sep))
@@ -198,9 +205,9 @@ class TestNoDeadDependencies:
                     roots = {(node.module or "").split(".")[0]} if node.level == 0 else set()
                 else:
                     continue
-                if roots & {"conformer", "omegaconf"}:
+                if dependency in roots:
                     offenders.append(rel_file)
-        assert not offenders, f"vendored files importing a dead dependency: {offenders}"
+        assert not offenders, f"vendored files importing {dependency}: {offenders}"
 
 
 class TestVendorTreeIsInertDuringCollection:
