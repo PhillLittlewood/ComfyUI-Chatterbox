@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import logging
 import os
 import sys
 from types import SimpleNamespace
@@ -101,16 +102,35 @@ class TestExports:
         assert "NODE_CLASS_MAPPINGS" not in referenced
         assert "NODE_DISPLAY_NAME_MAPPINGS" not in referenced
 
-    def test_no_web_directory(self, tree: ast.Module) -> None:
-        """The package ships no frontend assets.
+    def test_web_directory_is_declared_and_shipped(self, tree: ast.Module) -> None:
+        """The web directory the host is told to serve is there and holds the JS.
 
-        VibeVoice deliberately declares none. Pointing ComfyUI at a directory
-        that does not exist produces a startup warning on every boot and, worse,
-        makes "we have a web extension" a claim nothing backs up.
+        The guard this replaces was its mirror image: the package deliberately
+        declared no ``WEB_DIRECTORY``, because pointing the host at a directory
+        that does not exist warns on every boot and makes "we ship a frontend"
+        a claim nothing backs up. Both halves still have to hold -- declared
+        **and** present -- so the check stays, inverted. Resolving the way the
+        host does, against this module's own directory rather than the process
+        working directory, is what makes the ``isdir`` half a real assertion
+        instead of a guess about where the server was started.
+
+        The attribute belongs to the module, not to the extension object;
+        ``tests/test_extension.py`` is what keeps the object clean of it.
         """
-        referenced = _referenced_names(tree)
-        assert "WEB_DIRECTORY" not in referenced
-        assert "web_directory" not in referenced
+        assigned = _assigned_names(tree)
+        assert "WEB_DIRECTORY" in assigned, (
+            "the entry point declares no web directory, so js/extension.js is "
+            "never served and no node error is ever toasted"
+        )
+        web_dir = ast.literal_eval(assigned["WEB_DIRECTORY"])
+        assert web_dir == "./js"
+
+        resolved = os.path.abspath(os.path.join(os.path.dirname(INIT_PATH), web_dir))
+        assert os.path.isdir(resolved), f"{web_dir} does not resolve to a directory: {resolved}"
+        assert os.path.isfile(os.path.join(resolved, "extension.js")), (
+            "the served directory has no extension.js, so the browser imports "
+            "nothing and the toast listener never registers"
+        )
 
 
 class TestPytestGuard:
@@ -204,6 +224,94 @@ class TestBootstrapRunsForReal:
     def test_module_source_does_not_mutate_sys_modules(self, source: str) -> None:
         assert "sys.modules[" not in source
         assert "sys.path.insert" not in source
+
+
+class TestStartupIsQuiet:
+    """The bootstrap says nothing at INFO or above.
+
+    The pack used to log ``[Chatterbox TTS] Registering the Chatterbox custom
+    node.`` on every boot. Other extensions chat just as loudly, so the host's
+    own startup output was buried under a wall of "look at me" -- and the note
+    told the operator nothing: a silent import succeeded exactly as well as a
+    chatty one. What survives is one ``debug`` pack-count line, invisible at the
+    default level.
+
+    The re-exec is the same one :class:`TestBootstrapRunsForReal` performs:
+    pytest out of ``sys.modules`` so the guard opens, fake ``folder_paths`` /
+    ``server`` so nothing real is registered. ``caplog`` is attached to the root
+    logger first, so the records this fixture collects are exactly the ones the
+    bootstrap emitted while being imported -- and they are captured explicitly,
+    because ``caplog`` resets its handler when the *call* phase begins, after
+    this fixture has already run.
+    """
+
+    @pytest.fixture
+    def loaded(self, monkeypatch, caplog):
+        fake_folder_paths = SimpleNamespace(
+            models_dir=os.path.join(ROOT_DIR, ".test-models"),
+            folder_names_and_paths={},
+            supported_pt_extensions={".safetensors"},
+            get_folder_paths=lambda name: [],
+            add_model_folder_path=lambda *a, **k: None,
+            get_user_directory=lambda: os.path.join(ROOT_DIR, ".test-user"),
+        )
+        fake_server = SimpleNamespace(
+            PromptServer=SimpleNamespace(instance=SimpleNamespace(routes=MagicMock()))
+        )
+        monkeypatch.setitem(sys.modules, "folder_paths", fake_folder_paths)
+        monkeypatch.setitem(sys.modules, "server", fake_server)
+        # The guard keys off pytest being importable; hide it for this exec only.
+        monkeypatch.delitem(sys.modules, "pytest")
+        # Before the exec, so the caller can recount what the bootstrap emitted.
+        caplog.set_level(logging.INFO)
+
+        spec = importlib.util.spec_from_file_location(
+            f"{PKG_ALIAS}._entrypoint_probe_quiet",
+            INIT_PATH,
+            submodule_search_locations=[ROOT_DIR],
+        )
+        module = importlib.util.module_from_spec(spec)
+        monkeypatch.setitem(sys.modules, spec.name, module)
+        path_before = list(sys.path)
+        try:
+            spec.loader.exec_module(module)
+            captured = list(caplog.get_records("setup"))
+            yield module, fake_folder_paths, fake_server, captured
+        finally:
+            for entry in list(sys.path):
+                if entry not in path_before:
+                    sys.path.remove(entry)
+
+    def test_importing_the_entry_point_emits_no_info_or_above(self, loaded) -> None:
+        """A startup note is a regression; this is where it comes back to fail.
+
+        The silence has to be pinned by an assertion that can fail. The removed
+        ``logging.info`` call was one line in this module, and nothing else in
+        the suite looks at what the bootstrap says on the console.
+        """
+        _module, _folder_paths, _server, captured = loaded
+        offenders = [
+            f"{record.name}:{record.levelname}: {record.getMessage()}"
+            for record in captured
+            if record.levelno >= logging.INFO
+        ]
+        assert offenders == [], (
+            "the bootstrap still speaks at INFO or above; an install-time note "
+            "is exactly what the quiet start removed:\n  " + "\n  ".join(offenders)
+        )
+
+    def test_the_bootstrap_still_does_its_job(self, loaded) -> None:
+        """Silence is not the goal; a silent, working import is.
+
+        The quiet fixture replays the real bootstrap, so the registration it
+        performs has to be as real as in :class:`TestBootstrapRunsForReal` --
+        otherwise the silence above could be the sound of a bootstrap that broke
+        early and logged nothing because it did nothing.
+        """
+        _module, folder_paths_module, _server, _captured = loaded
+        registered = folder_paths_module.folder_names_and_paths
+        assert "tts" in registered
+        assert "chatterbox" in registered
 
 
 class TestAbsentServerDegrades:

@@ -3,10 +3,11 @@
 ComfyUI imports this module for one reason: to find ``comfy_entrypoint``, the
 async factory that hands back the :class:`~comfy_api.latest.ComfyExtension`
 holding this package's nodes. That is all a V3 custom node exposes -- the V1
-``NODE_CLASS_MAPPINGS`` / ``NODE_DISPLAY_NAME_MAPPINGS`` pair is gone, and
-there is deliberately **no ``WEB_DIRECTORY``**: this package ships no frontend
-assets, and pointing ComfyUI at a missing directory only produces a warning on
-every startup.
+``NODE_CLASS_MAPPINGS`` / ``NODE_DISPLAY_NAME_MAPPINGS`` pair is gone. The one
+other name it does expose is ``WEB_DIRECTORY``: ``js/`` ships ``extension.js``,
+a plain-ESM extension that turns a failed Chatterbox node execution into a
+web-UI toast, and ComfyUI serves that directory at
+``/extensions/ComfyUI-Chatterbox/`` for its loader to import at boot.
 
 What happens here, in order, each step degrading rather than raising:
 
@@ -43,7 +44,12 @@ else:
     from .modules.model_discovery import get_chatterbox_model_pack_names
     from .modules.vendor_loader import ensure_vendor_on_path
 
-    logging.info("[Chatterbox TTS] Registering the Chatterbox custom node.")
+    # Declared with the bootstrap, never above the pytest guard: the guard is
+    # what makes this module importable during collection, and a web directory
+    # bound there would be a claim the test process cannot back up. ComfyUI
+    # resolves it against this module's own directory and serves whatever it
+    # finds at /extensions/ComfyUI-Chatterbox/.
+    WEB_DIRECTORY = "./js"
 
     # 1. The vendored `chatterbox` package lives in this repository's `src/`.
     ensure_vendor_on_path()

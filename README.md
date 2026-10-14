@@ -127,6 +127,11 @@ from ComfyUI itself.
 Every widget is documented in its node tooltip. Load a graph from
 [`example_workflows/`](./example_workflows) to see the nodes wired up.
 
+When a node fails at execution — a missing reference clip, a pack with no
+conversion model — the message shows up as a toast in the web UI, naming the
+node and the error. Add `Chatterbox.ErrorToasts` to the `Comfy.Extension.Disabled`
+list in ComfyUI's settings to turn the toasts off.
+
 <p align="right"><a href="#readme-top">⟔ ▲ ⟓ back to top</a></p>
 
 <p id="good-to-know" align="center">◆◇◆◇◆◇◆◇◆◇◆◇◆◇◆◇◆◇◆◇◆◇◆◇◆</p>
