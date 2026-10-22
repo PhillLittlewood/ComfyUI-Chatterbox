@@ -12,6 +12,8 @@ whole family. The pieces that make that safe:
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pytest
 import torch
@@ -272,14 +274,29 @@ class TestGenerateAudioDispatch:
         assert "max_new_tokens" not in call
         assert "flow_cfg_scale" not in call
 
-    def test_turbo_tags_are_recognised_before_the_model_call(self) -> None:
-        """The parser consumes the nine square-bracket tags; the model never
-        sees one. Recognition is the point, not pass-through."""
+    def test_a_turbo_tag_reaches_the_model_verbatim(self) -> None:
+        """The tag is the model's own vocabulary, so it is handed over as it
+        was written.
+
+        Upstream never parses the nine square-bracket tags: it injects them
+        into the prompt and lets the tokenizer speak them
+        (``src/chatterbox/tts_turbo.py:401-403``). A Turbo checkpoint only
+        says ``[chuckle]`` if the text still carries it, so stripping it here
+        made the feature silent while looking implemented.
+        """
         model = ChatterboxTurboTTS()
-        generate_audio(model, "Hello [laugh] there")
+        generate_audio(model, "Hello [chuckle] there")
         spoken = model.calls[0]["args"][0]
-        assert "[laugh]" not in spoken
+        assert "[chuckle]" in spoken
         assert "Hello" in spoken and "there" in spoken
+
+    def test_a_turbo_model_receives_exaggeration_zero(self) -> None:
+        """Turbo ignores exaggeration for sampling (``hp.emotion_adv`` is
+        False on that family) and upstream warns about every non-zero
+        value -- once per chunk."""
+        model = ChatterboxTurboTTS()
+        generate_audio(model, "Hello there", exaggeration=0.5)
+        assert model.calls[0]["exaggeration"] == 0.0
 
     def test_a_classic_model_keeps_its_own_sampler(self) -> None:
         class PlainChatterboxTTS:
@@ -297,6 +314,60 @@ class TestGenerateAudioDispatch:
         assert call["cfg_weight"] == 0.5
         assert "top_k" not in call
         assert "norm_loudness" not in call
+
+
+class TestClassicPathTextSemantics:
+    """The classic path goes through the text engine too.
+
+    That is what makes chunking possible at all -- there is nowhere else to
+    cut a long script -- and it is what makes ``[Alice]`` open a character
+    segment instead of being read out loud as a name.
+    """
+
+    class _Plain:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        def generate(self, *args, **kwargs) -> torch.Tensor:
+            self.calls.append({"args": list(args), **kwargs})
+            return torch.zeros((1, 24000))
+
+    def test_the_classic_path_consumes_a_character_tag(self) -> None:
+        model = self._Plain()
+        generate_audio(model, "[Alice] Hi.")
+        assert model.calls[0]["args"][0] == "Hi."
+
+    def test_the_classic_path_keeps_a_turbo_tag_name_as_text(self) -> None:
+        """A Turbo tag on a pack with no Turbo vocabulary is *said*, not
+        swallowed as a voice name."""
+        model = self._Plain()
+        generate_audio(model, "[laugh] Hi.")
+        assert model.calls[0]["args"][0] == "[laugh] Hi."
+
+    def test_the_classic_path_reports_a_notice(self, caplog) -> None:
+        with caplog.at_level(logging.WARNING, logger=""):
+            generate_audio(self._Plain(), "[laugh] Hi.")
+        messages = [record.getMessage() for record in caplog.records]
+        assert any("Turbo" in message for message in messages), (
+            "a Turbo tag on a classic pack must be announced, not dropped: "
+            f"{messages!r}"
+        )
+
+    def test_a_pause_tag_is_reported_rather_than_silently_dropped(
+        self, caplog
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger=""):
+            generate_audio(self._Plain(), "Hi. [pause:1.5] There.")
+        messages = [record.getMessage() for record in caplog.records]
+        assert any("pause" in message.lower() for message in messages), (
+            f"the parsed-but-unrendered pause was dropped on the floor: {messages!r}"
+        )
+
+    def test_a_clean_script_reports_nothing(self, caplog) -> None:
+        with caplog.at_level(logging.WARNING, logger=""):
+            generate_audio(self._Plain(), "Hello there.")
+        messages = [record.getMessage() for record in caplog.records]
+        assert messages == []
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +427,81 @@ class TestTTSNodeCarriesTheTurboControls:
         )
         assert seen["top_k"] == 64
         assert seen["norm_loudness"] is False
+
+    def test_the_chunking_widgets_reach_generate_audio(self, monkeypatch) -> None:
+        """The four long-script widgets are not decoration: the values the
+        user picked have to arrive at the chunk loop."""
+        from ComfyUI_Chatterbox.nodes import tts_node
+
+        seen: dict = {}
+        monkeypatch.setattr(
+            tts_node,
+            "load_chatterbox_model",
+            lambda *a, **k: (object(), object(), object()),
+        )
+
+        def _fake_generate_audio(model, text, **kwargs):
+            seen.update(kwargs)
+            return torch.zeros((1, 24000)), 24000
+
+        monkeypatch.setattr(tts_node, "generate_audio", _fake_generate_audio)
+        tts_node.ChatterboxTTSNode.execute(
+            model_pack_name="chatterbox",
+            text="Hello.",
+            max_new_tokens=1000,
+            flow_cfg_scale=0.7,
+            exaggeration=0.5,
+            temperature=0.8,
+            cfg_weight=0.5,
+            repetition_penalty=1.2,
+            min_p=0.05,
+            top_p=1.0,
+            seed=1,
+            use_watermark=False,
+            enable_chunking=False,
+            max_chars_per_chunk=250,
+            chunk_combination_method="crossfade",
+            silence_between_chunks_ms=25,
+        )
+        assert seen["enable_chunking"] is False
+        assert seen["max_chars_per_chunk"] == 250
+        assert seen["chunk_combination_method"] == "crossfade"
+        assert seen["silence_between_chunks_ms"] == 25
+
+    def test_the_node_defaults_match_the_schema_defaults(self, monkeypatch) -> None:
+        """A run that says nothing about chunking gets the schema's defaults."""
+        from ComfyUI_Chatterbox.nodes import tts_node
+
+        seen: dict = {}
+        monkeypatch.setattr(
+            tts_node,
+            "load_chatterbox_model",
+            lambda *a, **k: (object(), object(), object()),
+        )
+
+        def _fake_generate_audio(model, text, **kwargs):
+            seen.update(kwargs)
+            return torch.zeros((1, 24000)), 24000
+
+        monkeypatch.setattr(tts_node, "generate_audio", _fake_generate_audio)
+        tts_node.ChatterboxTTSNode.execute(
+            model_pack_name="chatterbox",
+            text="Hello.",
+            max_new_tokens=1000,
+            flow_cfg_scale=0.7,
+            exaggeration=0.5,
+            temperature=0.8,
+            cfg_weight=0.5,
+            repetition_penalty=1.2,
+            min_p=0.05,
+            top_p=1.0,
+            seed=1,
+            use_watermark=False,
+        )
+        assert seen["enable_chunking"] is True
+        assert seen["max_chars_per_chunk"] == 400
+        assert seen["chunk_combination_method"] == "auto"
+        assert seen["silence_between_chunks_ms"] == 100
 
 
 class TestSharedFamilyFolderRouting:

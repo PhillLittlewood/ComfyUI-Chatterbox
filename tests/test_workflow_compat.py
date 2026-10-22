@@ -138,15 +138,15 @@ class TestShippedWorkflowsWereFound:
 
 
 class TestTTSWorkflowBindsByIndex:
-    """13 stored values, ``randomize`` at 11, ``use_watermark`` at 12."""
+    """24 stored values, ``randomize`` at 11, ``use_watermark`` at 12."""
 
     @pytest.mark.parametrize("path", WORKFLOW_FILES, ids=WORKFLOW_IDS)
-    def test_widget_values_are_13_long(self, path: str) -> None:
+    def test_widget_values_are_24_long(self, path: str) -> None:
         tts_nodes = _nodes_by_type(_load(path)).get("ChatterboxTTS", [])
         for node in tts_nodes:
-            assert len(node["widgets_values"]) == 13, (
+            assert len(node["widgets_values"]) == 24, (
                 f"{path}: ChatterboxTTS stores {len(node['widgets_values'])} "
-                f"values, expected 13 (12 required inputs + one seed companion)"
+                f"values, expected 24 (23 widget inputs + one seed companion)"
             )
 
     @pytest.mark.parametrize("path", WORKFLOW_FILES, ids=WORKFLOW_IDS)
@@ -253,7 +253,8 @@ class TestShippedWidgetValuesAgainstTheLiveSchema:
         # The S6.3 runtime widgets, then the Turbo-family controls appended
         # when the Turbo node merged into this one (2026-10-06), then the
         # Flash controls appended with the Single Language Pack round
-        # (2026-10-07).
+        # (2026-10-07), then the long-script controls appended with the
+        # emotion-tag and chunking round (2026-10-22).
         assert widgets[len(frozen) :] == (
             "device",
             "dtype",
@@ -262,8 +263,12 @@ class TestShippedWidgetValuesAgainstTheLiveSchema:
             "normalize_loudness",
             "num_steps",
             "cfg_scale",
+            "enable_chunking",
+            "max_chars_per_chunk",
+            "chunk_combination_method",
+            "silence_between_chunks_ms",
         )
-        assert len(widgets) == len(frozen) + 7
+        assert len(widgets) == len(frozen) + 11
 
     def test_the_tts_node_validates_the_shipped_pack(self) -> None:
         path = os.path.join(ROOT_DIR, "example_workflows", "ChatterboxTTS-workflow.json")

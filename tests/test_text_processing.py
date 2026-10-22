@@ -26,6 +26,7 @@ from ComfyUI_Chatterbox.modules.text_processing import (
     MIN_SAFE_SEGMENT_CHARS,
     PARAM_ALIASES,
     TURBO_TAGS,
+    TURBO_TAG_V2_SPELLING,
     V2_SPECIAL_TOKENS,
     apply_crash_protection,
     chunk_text,
@@ -245,12 +246,85 @@ class TestV2Tokens:
         assert "<whisper>" in plan.text
 
 
-class TestTurboTagsAreADifferentVocabulary:
-    """``[laugh]`` is a character name here, and a Turbo tag there."""
+class TestV2TokensOnTheTurboPath:
+    """A Turbo checkpoint knows the square spelling and not the angle one.
 
-    def test_square_brackets_are_a_character_on_the_classic_path(self) -> None:
-        segments = split_segments("[laugh] Hello.")
-        assert segments[0].character == "laugh"
+    The v2 set writes ``<clear_throat>`` with an underscore and Turbo's
+    tokenizer was trained on ``[clear throat]`` with a space, so the one
+    spelling that differs is published rather than buried.
+    """
+
+    def test_v2_tokens_are_untouched_on_the_classic_path(self) -> None:
+        assert resolve_v2_tokens("<giggle>")[0] == "<giggle>"
+
+    def test_v2_tokens_become_square_brackets_on_the_turbo_path(self) -> None:
+        assert resolve_v2_tokens("<giggle>", turbo_tags=True)[0] == "[giggle]"
+
+    def test_clear_throat_uses_the_turbo_spelling(self) -> None:
+        assert resolve_v2_tokens("<clear_throat>", turbo_tags=True)[0] == (
+            "[clear throat]"
+        )
+
+    def test_uh_keeps_its_casing_in_both_spellings(self) -> None:
+        assert resolve_v2_tokens("<UH>")[0] == "<UH>"
+        assert resolve_v2_tokens("<UH>", turbo_tags=True)[0] == "[UH]"
+
+    def test_an_unknown_angle_token_is_left_alone_on_the_turbo_path(self) -> None:
+        resolved, seen = resolve_v2_tokens("<not_a_real_token>", turbo_tags=True)
+        assert seen == ()
+        assert resolved == "<not_a_real_token>"
+
+    def test_a_v2_token_after_a_character_keeps_the_character(self) -> None:
+        """The conversion happens after the character is resolved, so the
+        character survives it."""
+        segments = split_segments("[Alice] <giggle> Hello.", turbo_tags=True)
+        assert segments[0].character == "Alice"
+        assert "<giggle>" in segments[0].text
+
+        plan = plan_text("[Alice] <giggle> Hello.", turbo_tags=True)
+        assert plan.segments[0].character == "Alice"
+        assert "[giggle]" in plan.text
+
+    def test_the_turbo_plan_text_carries_the_square_spelling(self) -> None:
+        # Crash protection is off here: it pads any segment shorter than
+        # twenty-one characters, and a two-word script is shorter than that.
+        plan = plan_text("<giggle> Hi.", turbo_tags=True, crash_protection_template="")
+        assert plan.text == "[giggle] Hi."
+
+    def test_the_only_differing_spelling_is_published(self) -> None:
+        assert TURBO_TAG_V2_SPELLING == {"clear_throat": "clear throat"}
+
+
+class TestTurboTagsAreADifferentVocabulary:
+    """``[laugh]`` is a Turbo tag, and a Turbo tag is never eaten."""
+
+    def test_a_turbo_tag_is_preserved_in_the_segment_text(self) -> None:
+        """The tag reaches the model exactly as the user typed it.
+
+        Upstream does not parse these tags; it hands the text to the
+        tokenizer, which knows the square spelling. A tag that is deleted
+        before the model sees it is a feature that looks implemented and is
+        not.
+        """
+        segment = split_segments("[laugh] Hi.", turbo_tags=True)[0]
+        assert segment.text == "[laugh] Hi."
+
+    def test_a_turbo_tag_is_still_recorded(self) -> None:
+        """Recognition is kept; only the deletion is gone."""
+        segment = split_segments("[laugh] Hi.", turbo_tags=True)[0]
+        assert segment.turbo_tags == ("laugh",)
+        assert segment.character is None
+
+    def test_a_turbo_tag_at_the_start_of_a_segment_is_preserved(self) -> None:
+        segment = split_segments("[Alice] [chuckle] Hello.", turbo_tags=True)
+        assert segment[0].text == "[chuckle] Hello."
+        assert segment[0].turbo_tags == ("chuckle",)
+        assert segment[0].character == "Alice"
+
+    def test_two_turbo_tags_are_both_preserved_and_recorded(self) -> None:
+        segment = split_segments("[laugh] and [chuckle] that", turbo_tags=True)[0]
+        assert segment.text == "[laugh] and [chuckle] that"
+        assert segment.turbo_tags == ("laugh", "chuckle")
 
     def test_the_same_text_is_a_tag_on_the_turbo_path(self) -> None:
         segments = split_segments("[laugh] Hello.", turbo_tags=True)
@@ -280,6 +354,49 @@ class TestTurboTagsAreADifferentVocabulary:
         segments = split_segments("[laugh] <giggle> Hi.", turbo_tags=True)
         assert segments[0].turbo_tags == ("laugh",)
         assert "<giggle>" in segments[0].text
+
+
+class TestATurboTagIsNotAVoiceName:
+    """On a pack that cannot speak them, Turbo tags are text -- not a name.
+
+    Treating ``[laugh]`` as a voice called "laugh" swallows the word: the
+    script says nothing where the user wrote a direction, and the voice never
+    changes either, because this repository ships no voice library.
+    """
+
+    def test_a_turbo_tag_name_on_the_classic_path_is_not_a_character(self) -> None:
+        segment = split_segments("[laugh] Hello.")[0]
+        assert segment.character is None
+        assert "[laugh]" in segment.text
+
+    def test_an_unknown_bracket_on_the_classic_path_is_still_a_character(self) -> None:
+        """The unchanged behaviour: every other bare bracket is a name."""
+        segment = split_segments("[Alice] Hello.")[0]
+        assert segment.character == "Alice"
+        assert segment.text == "Hello."
+
+    def test_a_turbo_tag_name_on_the_classic_path_produces_a_notice(self) -> None:
+        notices = plan_text("[laugh] Hi.").notices
+        assert notices, "the tag was swallowed without a word"
+        assert any("Turbo" in notice and "laugh" in notice for notice in notices)
+
+    def test_the_classic_path_does_not_record_the_tag_as_a_turbo_tag(self) -> None:
+        """It is not a Turbo tag here -- it is the word the user typed."""
+        assert split_segments("[laugh] Hello.")[0].turbo_tags == ()
+
+    @pytest.mark.parametrize("body", ["de:Alice", "Alice|seed:42", "Alice|temp:0.5"])
+    def test_a_bracket_with_a_colon_or_pipe_is_never_treated_as_a_turbo_tag(
+        self, body: str
+    ) -> None:
+        """Only the nine bare names are Turbo tags; the other forms keep
+        their own meaning."""
+        segment = split_segments(f"[{body}] Hello.")[0]
+        assert segment.turbo_tags == ()
+
+    def test_a_turbo_tag_is_not_noticed_on_the_turbo_path(self) -> None:
+        """It is native there, so there is nothing to announce."""
+        plan = plan_text("[laugh] Hi.", turbo_tags=True)
+        assert not [notice for notice in plan.notices if "Turbo" in notice]
 
 
 # ---------------------------------------------------------------------------
@@ -342,6 +459,8 @@ class TestChunking:
         assert len(chunks) > 1
         assert all(len(chunk) <= 200 for chunk in chunks)
         assert "".join(chunks).replace(" ", "") == text.replace(" ", "")
+        # No word is lost or split in half on the way through.
+        assert text.split() == " ".join(chunks).split()
 
     def test_cutting_is_disabled_by_the_flag(self) -> None:
         text = "A sentence here. " * 100
@@ -377,3 +496,60 @@ class TestPlanText:
         assert CRASH_PROTECTION_TEMPLATE == "hmm ,, {seg} hmm ,,"
         assert MIN_SAFE_SEGMENT_CHARS == 21
         assert apply_crash_protection("Short.").startswith("hmm ,,")
+
+    def test_auto_is_unchanged_by_the_new_boundary_rule(self) -> None:
+        """The tag-safe cut changes *where* a script is cut, not *how long* it
+        is: ``auto`` still resolves on the script's length alone."""
+        assert plan_text("x" * 500).chunk_method == "concatenate"
+        assert plan_text("x" * 501).chunk_method == "crossfade"
+        assert plan_text("x" * 1001).chunk_method == "silence_padding"
+
+    def test_a_script_with_tags_resolves_auto_on_its_length(self) -> None:
+        script = "[laugh] " + ("x" * 600)
+        assert plan_text(script).chunk_method == "crossfade"
+
+
+# ---------------------------------------------------------------------------
+# Notices -- what the engine could not honour
+# ---------------------------------------------------------------------------
+
+
+class TestNotices:
+    """A tag that is parsed and then means nothing is announced, not dropped.
+
+    The alternative is a script that quietly loses a word, and a user who has
+    no idea why ``[laugh]`` did nothing.
+    """
+
+    def test_a_plain_script_has_no_notices(self) -> None:
+        assert plan_text("Hello there, this is a plain script.").notices == ()
+
+    def test_a_turbo_tag_on_a_non_turbo_pack_is_noticed(self) -> None:
+        notices = plan_text("[laugh] Hi.").notices
+        assert len(notices) == 1
+        assert "[laugh]" in notices[0]
+        assert "Turbo" in notices[0]
+
+    def test_the_same_tag_is_not_noticed_twice(self) -> None:
+        plan = plan_text("[laugh] Hi. [laugh] Bye.")
+        assert len([notice for notice in plan.notices if "Turbo" in notice]) == 1
+
+    def test_a_pause_is_noticed_rather_than_silently_dropped(self) -> None:
+        notices = plan_text("Hi there. [pause:1.5] And more.").notices
+        assert any("pause" in notice.lower() for notice in notices)
+
+    def test_a_language_is_noticed_rather_than_silently_dropped(self) -> None:
+        notices = plan_text("[de:Alice] Hallo.").notices
+        assert any("language" in notice.lower() for notice in notices)
+
+    def test_a_notice_never_changes_the_audio(self) -> None:
+        """A notice is a note about the text, not a change to it: the same
+        words are spoken on either path."""
+        classic = plan_text("[laugh] Hi there, this is long enough to speak.")
+        turbo = plan_text(
+            "[laugh] Hi there, this is long enough to speak.", turbo_tags=True
+        )
+        assert classic.text == turbo.text
+        assert classic.chunks == turbo.chunks
+        assert classic.notices != ()
+        assert turbo.notices == ()

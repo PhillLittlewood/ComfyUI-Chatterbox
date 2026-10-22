@@ -74,6 +74,11 @@ APPENDED_WIDGET_ORDER: dict[str, tuple[str, ...]] = {
         # Flash controls (Single Language Pack round, 2026-10-07).
         "num_steps",
         "cfg_scale",
+        # Long-script controls (emotion-tag and chunking round, 2026-10-22).
+        "enable_chunking",
+        "max_chars_per_chunk",
+        "chunk_combination_method",
+        "silence_between_chunks_ms",
     ),
     VC_NODE_ID: (
         "device",

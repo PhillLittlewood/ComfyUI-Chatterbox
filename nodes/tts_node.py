@@ -44,6 +44,7 @@ from ..modules.audio_utils import interrupt_exception_class, to_comfy_audio
 from ..modules.dtype_utils import DTYPE_AUTO
 from ..modules.generation import generate_audio, load_chatterbox_model
 from ..modules.model_discovery import get_chatterbox_model_pack_names
+from ..modules.text_processing import CHUNK_COMBINATION_METHODS
 from .common import default_pack_name, runtime_widgets, silent_audio, validate_common_inputs
 
 __all__ = ["ChatterboxTTSNode"]
@@ -266,6 +267,56 @@ class ChatterboxTTSNode(io.ComfyNode):
                         "only; every other family ignores this."
                     ),
                 ),
+                # Long-script controls. Appended last, so every widget index
+                # an existing saved workflow holds is untouched.
+                io.Boolean.Input(
+                    "enable_chunking",
+                    default=True,
+                    tooltip=(
+                        "Split a long script into chunks and synthesise them "
+                        "one at a time, then join them. This is what lets a "
+                        "script of any length be spoken in full: the token "
+                        "budget applies per chunk, not to the whole script. "
+                        "Turn it off to send the script to the model in one "
+                        "piece."
+                    ),
+                ),
+                io.Int.Input(
+                    "max_chars_per_chunk",
+                    default=400,
+                    min=100,
+                    max=1000,
+                    step=50,
+                    tooltip=(
+                        "How many characters go into one chunk. The cut "
+                        "prefers a sentence end, then a line break, then a "
+                        "space, and never lands inside a tag. Smaller chunks "
+                        "follow a long script more closely but cost more "
+                        "model calls."
+                    ),
+                ),
+                io.Combo.Input(
+                    "chunk_combination_method",
+                    options=list(CHUNK_COMBINATION_METHODS),
+                    default="auto",
+                    tooltip=(
+                        "How the chunks are joined. 'auto' resolves by the "
+                        "length of the script: up to 500 characters joins "
+                        "cleanly, above 500 crossfades, above 1000 pads with "
+                        "silence."
+                    ),
+                ),
+                io.Int.Input(
+                    "silence_between_chunks_ms",
+                    default=100,
+                    min=0,
+                    max=500,
+                    step=25,
+                    tooltip=(
+                        "The gap between two chunks when the join method is "
+                        "'silence_padding'. Ignored by the other methods."
+                    ),
+                ),
                 io.Audio.Input(
                     "audio_prompt",
                     optional=True,
@@ -322,6 +373,10 @@ class ChatterboxTTSNode(io.ComfyNode):
         normalize_loudness: bool = True,
         num_steps: int = 10,
         cfg_scale: float = 1.0,
+        enable_chunking: bool = True,
+        max_chars_per_chunk: int = 400,
+        chunk_combination_method: str = "auto",
+        silence_between_chunks_ms: int = 100,
         audio_prompt: Optional[dict] = None,
         client_id: Optional[str] = None,
     ) -> io.NodeOutput:
@@ -383,6 +438,10 @@ class ChatterboxTTSNode(io.ComfyNode):
                 norm_loudness=normalize_loudness,
                 num_steps=num_steps,
                 cfg_scale=cfg_scale,
+                enable_chunking=enable_chunking,
+                max_chars_per_chunk=max_chars_per_chunk,
+                chunk_combination_method=chunk_combination_method,
+                silence_between_chunks_ms=silence_between_chunks_ms,
             )
         except interrupt_error:
             # InterruptProcessingException derives from BaseException, so this

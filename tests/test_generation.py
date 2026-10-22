@@ -651,16 +651,22 @@ class TestInterruptHandling:
         assert returned is None
 
     def test_the_interrupt_clause_precedes_the_generic_one(self) -> None:
-        """The source-level contract, asserted structurally rather than by eye."""
+        """The source-level contract, asserted structurally rather than by eye.
+
+        The guarded try/except lives in ``_generate_one_chunk`` since the
+        chunk loop was added: that is the function that calls
+        ``model.generate``, and it is the one that has to let a cancel
+        through.
+        """
         tree = ast.parse(read_source(generation_module), filename=generation_module.__file__)
         function = next(
             node
             for node in ast.walk(tree)
-            if isinstance(node, ast.FunctionDef) and node.name == "generate_audio"
+            if isinstance(node, ast.FunctionDef) and node.name == "_generate_one_chunk"
         )
 
         guarded = [node for node in ast.walk(function) if isinstance(node, ast.Try) and len(node.handlers) >= 2]
-        assert guarded, "generate_audio has no multi-clause try/except to inspect"
+        assert guarded, "_generate_one_chunk has no multi-clause try/except to inspect"
 
         for node in guarded:
             kinds = []
@@ -926,3 +932,178 @@ class TestModuleSurface:
         """
         with pytest.raises(ImportError):
             importlib.import_module("modules.utils")
+
+# ---------------------------------------------------------------------------
+# Long scripts: one model call per chunk, joined with the resolved method
+# ---------------------------------------------------------------------------
+
+
+class SeededStub(StubPack):
+    """A stub whose output depends on the seed that was set before the call.
+
+    That is what makes determinism observable: the same seed gives the same
+    waveform, a different seed gives a different one.
+    """
+
+    def generate(self, *args, **kwargs) -> torch.Tensor:
+        self.calls.append({"args": list(args), **kwargs})
+        level = float(torch.rand(1).item())
+        return torch.full((1, self.samples), level)
+
+
+class LengthStub:
+    """A stub whose audio is as long as the text it was handed.
+
+    The real model speaks longer scripts for longer, so a stub that does the
+    same is enough to show that a long script is spoken *in full* rather than
+    truncated.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def generate(self, *args, **kwargs) -> torch.Tensor:
+        self.calls.append({"args": list(args), **kwargs})
+        text = args[0] if args else kwargs.get("text", "")
+        return torch.full((1, max(1, len(text) * 10)), 0.1)
+
+
+#: Long enough to be cut into several chunks at the default limit.
+LONG_SCRIPT = "This is one sentence of the long script. " * 40
+
+
+class TestChunkedSynthesis:
+    def test_a_short_script_is_one_model_call(self) -> None:
+        model = StubPack()
+        generate_audio(model, "hello there", seed=1)
+        assert len(model.calls) == 1
+
+    def test_a_long_script_calls_the_model_once_per_chunk(self) -> None:
+        model = StubPack()
+        generate_audio(model, LONG_SCRIPT, seed=1, max_chars_per_chunk=400)
+        assert len(model.calls) >= 2
+
+    def test_the_chunks_are_the_whole_script(self) -> None:
+        """No word is dropped between the chunks."""
+        model = StubPack()
+        generate_audio(model, LONG_SCRIPT, seed=1, max_chars_per_chunk=400)
+        spoken = " ".join(call["args"][0] for call in model.calls)
+        assert spoken.split() == LONG_SCRIPT.split()
+
+    def test_the_chunks_are_joined_with_the_resolved_method(self) -> None:
+        """``auto`` resolves a long script to ``silence_padding``, so the
+        joined audio is the parts plus one gap between each pair."""
+        model = StubPack(samples=24000)
+        waveform, rate = generate_audio(
+            model, LONG_SCRIPT, seed=1, max_chars_per_chunk=400, silence_between_chunks_ms=100
+        )
+        calls = len(model.calls)
+        gap = int(rate * 100 / 1000)
+        assert waveform.shape[-1] == calls * 24000 + (calls - 1) * gap
+
+    def test_concatenate_is_used_for_a_500_char_script(self) -> None:
+        """Exactly 500 characters is still ``concatenate``: the comparison is
+        strictly greater than."""
+        script = "word " * 100
+        assert len(script.strip()) == 499
+        model = StubPack(samples=24000)
+        waveform, _rate = generate_audio(
+            model, script, seed=1, max_chars_per_chunk=400
+        )
+        assert len(model.calls) == 2
+        assert waveform.shape[-1] == 2 * 24000
+
+    def test_crossfade_is_used_for_a_501_char_script(self) -> None:
+        """One character more and the join crossfades: the total is the sum
+        of the parts minus the overlap."""
+        script = "word " * 100 + "x"
+        assert len(script.strip()) == 501
+        model = StubPack(samples=24000)
+        waveform, rate = generate_audio(
+            model, script, seed=1, max_chars_per_chunk=400
+        )
+        assert len(model.calls) == 2
+        overlap = int(rate * 10 / 1000)
+        assert waveform.shape[-1] == 2 * 24000 - overlap
+
+    def test_chunking_can_be_disabled(self) -> None:
+        model = StubPack()
+        generate_audio(model, LONG_SCRIPT, seed=1, enable_chunking=False)
+        assert len(model.calls) == 1
+
+    def test_the_chunk_count_is_logged(self, caplog) -> None:
+        with caplog.at_level(logging.INFO, logger=""):
+            generate_audio(StubPack(), LONG_SCRIPT, seed=1, max_chars_per_chunk=400)
+        messages = [record.getMessage() for record in caplog.records]
+        assert any(
+            "chunk" in message and "silence_padding" in message
+            for message in messages
+        ), f"the chunk count and the join method were not logged: {messages!r}"
+
+
+class TestChunkedDeterminism:
+    """Same script, same seed, same audio -- chunk by chunk."""
+
+    def test_each_chunk_gets_its_own_seed(self, monkeypatch) -> None:
+        seen: list[int] = []
+        monkeypatch.setattr(generation_module, "set_seed", seen.append)
+        generate_audio(StubPack(), LONG_SCRIPT, seed=42, max_chars_per_chunk=400)
+        assert len(seen) >= 2
+        assert seen == [42 + index for index in range(len(seen))]
+
+    def test_a_zero_seed_stays_random(self, monkeypatch) -> None:
+        """Zero is the widget's "random" convention: every chunk keeps it."""
+        seen: list[int] = []
+        monkeypatch.setattr(generation_module, "set_seed", seen.append)
+        generate_audio(StubPack(), LONG_SCRIPT, seed=0, max_chars_per_chunk=400)
+        assert seen and all(value == 0 for value in seen)
+
+    def test_the_same_script_and_seed_produce_identical_audio(self) -> None:
+        first, _ = generate_audio(
+            SeededStub(), LONG_SCRIPT, seed=7, max_chars_per_chunk=400
+        )
+        second, _ = generate_audio(
+            SeededStub(), LONG_SCRIPT, seed=7, max_chars_per_chunk=400
+        )
+        assert torch.equal(first, second)
+
+    def test_a_different_seed_produces_different_audio(self) -> None:
+        first, _ = generate_audio(
+            SeededStub(), LONG_SCRIPT, seed=7, max_chars_per_chunk=400
+        )
+        second, _ = generate_audio(
+            SeededStub(), LONG_SCRIPT, seed=8, max_chars_per_chunk=400
+        )
+        assert not torch.equal(first, second)
+
+
+class TestLongScriptSynthesis:
+    """A long script is spoken in full: more text, more audio, no silence."""
+
+    def test_a_long_script_produces_more_audio_than_a_short_one(self) -> None:
+        short = "A short line of dialogue."
+        long = "A short line of dialogue. " * 120
+        short_wave, rate = generate_audio(LengthStub(), short, seed=1)
+        long_wave, _ = generate_audio(
+            LengthStub(), long, seed=1, max_chars_per_chunk=400
+        )
+        assert long_wave.shape[-1] > short_wave.shape[-1]
+        assert rate == 24000
+
+    def test_the_joined_audio_is_above_the_rms_floor(self) -> None:
+        """The same floor the real-model smoke test uses (0.01)."""
+        wave, _ = generate_audio(
+            LengthStub(),
+            "A short line of dialogue. " * 120,
+            seed=1,
+            max_chars_per_chunk=400,
+        )
+        level = float(torch.sqrt(torch.mean(wave.float() ** 2)).item())
+        assert level > 0.01, f"RMS {level:.5f} is at or below the silence floor"
+
+    def test_the_long_script_is_synthesised_in_several_chunks(self) -> None:
+        stub = LengthStub()
+        generate_audio(
+            stub, "A short line of dialogue. " * 120, seed=1, max_chars_per_chunk=400
+        )
+        assert len(stub.calls) >= 2

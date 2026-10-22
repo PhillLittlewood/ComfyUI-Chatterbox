@@ -144,6 +144,7 @@ list in ComfyUI's settings to turn the toasts off.
 | **Offline** | Packs are fetched by a first-run download and a local pack is never re-downloaded afterwards. |
 | **VRAM** | Weights load under ComfyUI's manager and offload between runs; ~2.5 GB per pack on disk as safetensors. |
 | **Layout** | Node code lives in `nodes/`, the vendored Chatterbox core in `src/chatterbox/`. |
+| **Emotion tags & chunking** | Turbo and Nano packs speak the paralinguistic tags natively: write `[laugh]`, `[chuckle]`, `[sigh]`, `[clear throat]` and the rest into the text box and the model says them. Classic, multilingual and Flash packs have no such vocabulary, so the same words are read out as plain text and the run says so in the log. `<giggle>`-style v2 tokens are re-spelled for Turbo and left alone elsewhere. Long scripts are cut into chunks, spoken one chunk at a time and joined again -- `auto` picks the join by script length (clean under 500 characters, crossfaded above it, padded with silence above 1000), and the cut never lands inside a tag. |
 | **Upgrading from 1.x** | 2.0.0 moved packs from `models/chatterbox_tts/` to `models/tts/chatterbox/`. No compatibility shim is provided, so delete the old directory by hand. Widget order did not change and node ids did not change, so saved workflows still load. |
 | **Changelog** | [CHANGELOG.md](./CHANGELOG.md) |
 

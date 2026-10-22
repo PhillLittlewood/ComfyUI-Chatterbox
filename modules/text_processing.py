@@ -13,7 +13,8 @@ corpus specifies:
 2. language tags -- ``[de:Alice] Hallo.``
 3. pause tags -- ``[pause:1.5]`` / ``[wait:2s]`` / ``[stop:500ms]``
 4. per-segment parameter overrides -- ``[Alice|seed:42|temp:0.5]``
-5. the v2 angle-bracket tokens -- ``<giggle>``
+5. the v2 angle-bracket tokens -- ``<giggle>`` (re-spelled ``[giggle]`` on a
+   Turbo pack, whose tokenizer knows the square spelling and not the angle one)
 
 Stages 1-4 classify one ``[...]`` token, so they are tried **in that order**
 against each token in turn: a token that is not a character is then tested as a
@@ -22,14 +23,22 @@ because a ``<giggle>`` is only rewritten once the character names around it have
 resolved -- rewriting it first is what makes ``[Alice] <giggle>`` lose its
 character.
 
+The nine Turbo tag names (``[laugh]``, ``[clear throat]``, ...) are claimed
+**before** stage 1, on every path. A Turbo pack needs them kept verbatim for
+the tokenizer, and a pack that has no Turbo vocabulary still has to say the
+word rather than swallow it as a voice name -- so the tag is never a
+character, anywhere.
+
 Three rules that follow from the syntax and are worth stating up front:
 
 * **Square brackets are the Turbo tag set's home, and angle brackets are the v2
-  token set's.** They are deliberately not interchangeable. ``[giggle]`` is a
-  *character name* -- an upstream footgun this engine reproduces faithfully and
-  documents rather than silently second-guessing -- while ``<giggle>`` is a v2
-  special token. Turbo tags (``[laugh]``, ``[clear throat]``, ...) are only
-  recognised when the caller says it is speaking to a Turbo model.
+  token set's.** They are deliberately not interchangeable. ``<giggle>`` is a
+  v2 special token; ``[laugh]`` is a Turbo paralinguistic tag, and it is only
+  *recognised* as one when the caller says it is speaking to a Turbo model.
+  On any other pack the nine Turbo names are kept as **literal text** and
+  reported as a notice -- swallowing ``[laugh]`` as a voice name would take the
+  word out of the speech without saying so. Every other bare bracket stays a
+  *character name*, which is what upstream does.
 * **Unknown parameters are ignored, not fatal.** A script carried over from
   another tool is full of knobs this node has no socket for; refusing the whole
   run over ``[Alice|batch:4]`` would be hostile.
@@ -55,6 +64,7 @@ __all__ = [
     "AUTO_CHUNK_THRESHOLDS",
     "PARAM_ALIASES",
     "TURBO_TAGS",
+    "TURBO_TAG_V2_SPELLING",
     "V2_SPECIAL_TOKENS",
     "UPPERCASE_V2_TOKENS",
     "TextSegment",
@@ -140,6 +150,14 @@ TURBO_TAGS: tuple[str, ...] = (
     "clear throat",
 )
 
+#: The v2 tokens whose Turbo spelling differs from their own name. Only one
+#: does: the v2 set writes ``<clear_throat>`` with an underscore, Turbo's
+#: tokenizer was trained on ``[clear throat]`` with a space. Every other token
+#: keeps its own spelling on both sides of the translation.
+TURBO_TAG_V2_SPELLING: dict[str, str] = {
+    "clear_throat": "clear throat",
+}
+
 #: The 30 named v2 special tokens. The tokenizer upstream actually contains 118
 #: special tokens; these are the 30 the reference documentation names, and they
 #: are undocumented upstream, experimental, and tracked in upstream issue #186.
@@ -193,6 +211,15 @@ _TURBO_TAG_LOOKUP = frozenset(TURBO_TAGS)
 # because they are never tags -- only v2 special tokens.
 _BRACKET_RE = re.compile(r"\[([^\[\]]*)\]")
 _ANGLE_RE = re.compile(r"<([^<>]*)>")
+#: A sentence end: the mark that ends a sentence and the space that proves it.
+_SENTENCE_END_RE = re.compile(r"[.!?] ")
+#: The bracket pairs a chunk boundary must never land inside.
+_BRACKET_PAIRS = (("[", "]"), ("<", ">"))
+#: A Turbo tag as it appears in *text*: the square spelling, in any case.
+_TURBO_TAG_IN_TEXT_RE = re.compile(
+    r"\[\s*(" + "|".join(re.escape(tag) for tag in TURBO_TAGS) + r")\s*\]",
+    re.IGNORECASE,
+)
 _PAUSE_RE = re.compile(r"^(pause|wait|stop)\s*:\s*(?P<value>.+)$", re.IGNORECASE)
 _OVERRIDE_SPLIT_RE = re.compile(r"\|")
 _DURATION_RE = re.compile(r"^\s*(?P<number>\d+(?:\.\d+)?|\.\d+)\s*(?P<unit>[a-z]*)\s*$", re.IGNORECASE)
@@ -230,7 +257,12 @@ class TextSegment:
         pause_after: Seconds of silence to insert **after** this segment, from
             the ``[pause:…]`` / ``[wait:…]`` / ``[stop:…]`` tag that follows it.
             A pause with nothing before it in the script is dropped.
-        turbo_tags: Turbo paralinguistic tags found inside this segment.
+        turbo_tags: The Turbo paralinguistic tags found inside this segment.
+            Recorded on a Turbo pack, where they are kept verbatim in ``text``
+            and handed to the model, which is where they have an effect. On any
+            other pack a Turbo tag is kept as literal text -- that pack has no
+            such vocabulary -- and the plan reports a notice about it instead
+            of recording it here.
         index: Position in the original script, preserved through chunking so a
             caller can still map a chunk back to where it came from.
     """
@@ -251,13 +283,29 @@ class TextSegment:
 
 @dataclass
 class TextPlan:
-    """A parsed script: its segments and how to synthesise them."""
+    """A parsed script: its segments and how to synthesise them.
+
+    Attributes:
+        segments: The script, split and resolved.
+        text: Everything that will be spoken, as one string.
+        chunks: ``text`` cut into the pieces that are synthesised separately.
+        chunk_method: The concrete join method -- never ``"auto"``.
+        char_count: Length of ``text``.
+        notices: Things the engine could not honour, said out loud rather
+            than dropped. A notice is never an error and never changes the
+            audio: it is the engine admitting that a tag in the script is not
+            going to do what it looks like it does -- a Turbo tag on a pack
+            without the Turbo vocabulary, a pause that is parsed but never
+            rendered as silence, a language that is parsed but never switched.
+            The caller decides whether to log them.
+    """
 
     segments: tuple[TextSegment, ...]
     text: str
     chunks: tuple[str, ...]
     chunk_method: str
     char_count: int
+    notices: tuple[str, ...] = ()
 
     @property
     def characters(self) -> tuple[str, ...]:
@@ -421,7 +469,11 @@ def _normalise_v2_token(inner: str) -> Optional[str]:
     return candidate.upper() if candidate.upper() in UPPERCASE_V2_TOKENS else candidate
 
 
-def resolve_v2_tokens(text: str) -> tuple[str, tuple[str, ...]]:
+def resolve_v2_tokens(
+    text: str,
+    *,
+    turbo_tags: bool = False,
+) -> tuple[str, tuple[str, ...]]:
     """Normalise the v2 ``<...>`` special tokens in ``text``.
 
     Runs **after** the script has been split into segments, which is what makes
@@ -437,9 +489,20 @@ def resolve_v2_tokens(text: str) -> tuple[str, tuple[str, ...]]:
 
     Args:
         text: One segment's text.
+        turbo_tags: Whether the pack speaks Turbo. A Turbo checkpoint's
+            tokenizer knows the **square** spelling and has never seen
+            ``<giggle>``, so on a Turbo pack a recognised token is re-spelled
+            into that vocabulary: ``<giggle>`` becomes ``[giggle]`` and
+            ``<clear_throat>`` becomes ``[clear throat]``, the spelling Turbo
+            was actually trained on. On every other pack the angle spelling is
+            left exactly as it is -- those packs have no tag vocabulary at all,
+            and rewriting a token into a spelling that means nothing there
+            would be a change for its own sake.
 
     Returns:
-        ``(resolved_text, tokens_seen)``.
+        ``(resolved_text, tokens_seen)``. The second element lists the
+        canonical token *names* (``"giggle"``, ``"UH"``, ``"clear_throat"``)
+        whatever spelling was emitted for them.
     """
     seen: list[str] = []
 
@@ -448,7 +511,10 @@ def resolve_v2_tokens(text: str) -> tuple[str, tuple[str, ...]]:
         if canonical is None:
             return match.group(0)
         seen.append(canonical)
-        return f"<{canonical}>"
+        if not turbo_tags:
+            return f"<{canonical}>"
+        spelling = TURBO_TAG_V2_SPELLING.get(canonical, canonical)
+        return f"[{spelling}]"
 
     return _ANGLE_RE.sub(_replace, text), tuple(seen)
 
@@ -476,10 +542,21 @@ def split_segments(
 
     Args:
         text: The script.
-        turbo_tags: Recognise the square-bracket Turbo tag set. ``False`` (the
-            default) means ``[laugh]`` is a character named ``"laugh"``, which
-            is exactly what upstream does and what the reference corpus warns
-            about.
+        turbo_tags: Recognise the square-bracket Turbo tag set.
+
+            On a Turbo pack the tag is **kept exactly as written** and recorded
+            in ``segment.turbo_tags``: upstream hands the tag to the tokenizer
+            verbatim (``src/chatterbox/tts_turbo.py:401-403``) and never parses
+            it, so a Turbo checkpoint only speaks the tag if the text still
+            carries it. Deleting it here is what made the feature silent.
+
+            On any other pack the nine Turbo names have no vocabulary to land
+            in, so they are kept as literal text too -- recorded as text, not
+            as a tag -- and reported, by :func:`plan_text`, as a notice. They
+            are deliberately **not** treated as character names: ``[laugh]``
+            would be swallowed as a voice called "laugh", and the word would
+            leave the script without anyone being told. Every other bare
+            bracket keeps today's character behaviour.
 
     Returns:
         The segments, in order. Empty input yields no segments.
@@ -494,8 +571,6 @@ def split_segments(
     # means 0.5 s of silence after "Hi.". It is held here rather than written
     # straight onto ``current`` because the tag closes the segment it lands on.
     pending_pause = 0.0
-    # Set when a consumed tag left trailing space that must not double up.
-    pending_lstrip = False
 
     def _flush() -> None:
         nonlocal current, pending_pause
@@ -508,21 +583,26 @@ def split_segments(
 
     for match in _BRACKET_RE.finditer(text):
         chunk = text[cursor : match.start()]
-        current.text += chunk.lstrip() if pending_lstrip else chunk
-        pending_lstrip = False
+        current.text += chunk
         cursor = match.end()
         body = match.group(1)
+        tag_name = body.strip().lower()
 
-        if turbo_tags and body.strip().lower() in _TURBO_TAG_LOOKUP:
-            current.turbo_tags = current.turbo_tags + (body.strip().lower(),)
-            # Removing a tag must not leave the double space that surrounded it:
-            # ``"a test. [laugh] Isn't"`` would otherwise become ``"a test.  Is"``
-            # and reach the model with a gap the user never typed. Trailing
-            # space before the tag is dropped; leading space after it is kept,
-            # so the single separator survives. A tag at the very start of a
-            # segment has nothing before it to keep the separator.
-            current.text = current.text.rstrip()
-            pending_lstrip = not current.text
+        if (
+            tag_name in _TURBO_TAG_LOOKUP
+            and ":" not in body
+            and "|" not in body
+        ):
+            # A Turbo paralinguistic tag. The text is kept exactly as written
+            # on both paths: upstream hands the tag to the tokenizer verbatim
+            # and never parses it, so a Turbo checkpoint only speaks the tag
+            # if the text still carries it -- and a pack that cannot speak it
+            # says the word rather than swallowing it. What differs is
+            # whether the tag is *recorded* as one, and that is what the
+            # caller's ``turbo_tags`` flag means.
+            if turbo_tags:
+                current.turbo_tags = current.turbo_tags + (tag_name,)
+            current.text += match.group(0)
             continue
 
         kind, payload = _classify_bracket(body)
@@ -568,7 +648,7 @@ def split_segments(
         )
 
     tail = text[cursor:]
-    current.text += tail.lstrip() if pending_lstrip else tail
+    current.text += tail
     _flush()
     return segments
 
@@ -637,6 +717,61 @@ def select_chunk_method(method: str, char_count: int) -> str:
     return "concatenate"
 
 
+def _last_sentence_end(text: str, limit: int) -> int:
+    """The index of the last sentence end inside the window, or ``-1``.
+
+    A sentence end is ``.`` / ``!`` / ``?`` followed by a space -- the three
+    marks that end a sentence and the space that proves it. The window is
+    ``text[:limit]`` plus one character, because a sentence end whose space
+    falls just past the window is still a sentence end, and cutting there
+    fills the chunk exactly.
+    """
+    found = -1
+    for match in _SENTENCE_END_RE.finditer(text[: limit + 1]):
+        if match.start() < limit:
+            found = match.start()
+    return found
+
+
+def _bracket_run_at(text: str, position: int) -> Optional[tuple[int, int]]:
+    """The ``[...]`` / ``<...>`` run that a cut at ``position`` lands inside.
+
+    Returns ``(open_index, close_index)``, or ``None`` when the cut is not
+    inside a run. The run is the one opened by the last opening bracket
+    before the cut whose closing bracket is at or after it.
+    """
+    for opener, closer in _BRACKET_PAIRS:
+        start = text.rfind(opener, 0, position)
+        if start < 0:
+            continue
+        end = text.find(closer, start + 1)
+        if end < 0:
+            continue
+        if end >= position:
+            return (start, end)
+    return None
+
+
+def _snap_out_of_bracket_run(text: str, take: int, limit: int) -> int:
+    """Move a cut that landed inside a bracket run out of it.
+
+    Forward to the closing bracket when that still fits inside the limit,
+    otherwise back to before the opening bracket. A run that is longer than
+    the limit on its own is never split: the chunk grows past the limit
+    instead, which is the one documented exception to the ceiling.
+    """
+    run = _bracket_run_at(text, take)
+    if run is None:
+        return take
+    start, end = run
+    forward = end + 1
+    if forward <= limit:
+        return forward
+    if start > 0:
+        return start
+    return forward
+
+
 def chunk_text(
     text: str,
     max_chars_per_chunk: int = 400,
@@ -649,6 +784,15 @@ def chunk_text(
     hard limit -- in that order. Hard-cutting mid-word is the last resort
     because it is the one that sounds wrong, and it only happens on a single
     unbroken run longer than the limit (a URL, a long number).
+
+    A cut never lands **inside** a tag. Half a ``[chuckle]`` in one chunk and
+    half in the next is not a tag at all: the model sees two pieces of
+    punctuation and says neither. So a cut that falls inside a ``[...]`` or
+    ``<...>`` run is moved out of it -- forward to the closing bracket when
+    that still fits inside the limit, otherwise back to before the opening
+    one. The single documented exception is a tag run that is longer than the
+    limit by itself: it stays whole and the chunk grows past the ceiling,
+    because splitting it would be worse than exceeding it.
 
     Args:
         text: The script to cut.
@@ -664,9 +808,10 @@ def chunk_text(
     chunks: list[str] = []
     remaining = text
     while len(remaining) > max_chars_per_chunk:
-        window = remaining[:max_chars_per_chunk]
+        limit = max_chars_per_chunk
+        window = remaining[:limit]
         # Sentence end, then line break, then space: in that order of preference.
-        cut = window.rfind(". ")
+        cut = _last_sentence_end(remaining, limit)
         if cut < 0:
             cut = window.rfind("\n")
         if cut < 0:
@@ -674,10 +819,12 @@ def chunk_text(
         if cut <= 0:
             # No boundary inside the window -- one unbreakable run. Consume the
             # whole window, or the loop never advances.
-            take = max_chars_per_chunk
+            take = limit
         else:
             # The boundary character belongs to the chunk that ends on it.
             take = cut + 1
+        # The cut may have landed inside a tag; move it out rather than split.
+        take = _snap_out_of_bracket_run(remaining, take, limit)
         chunks.append(remaining[:take].strip())
         remaining = remaining[take:]
 
@@ -688,8 +835,74 @@ def chunk_text(
 
 
 # ---------------------------------------------------------------------------
+# Notices (D8) -- what the engine could not honour
+# ---------------------------------------------------------------------------
+
+
+def _turbo_tag_notice(tag: str) -> str:
+    """The notice a Turbo tag earns on a pack that has no Turbo vocabulary."""
+    return (
+        f"[{tag}] is a Turbo/Nano paralinguistic tag. This pack has no Turbo "
+        f"tag vocabulary, so the tag is spoken as literal text -- use a Turbo "
+        f"or Nano pack for it to have an effect."
+    )
+
+
+#: A pause is parsed onto its segment and never rendered: nothing in this
+#: repository turns ``pause_after`` into silence.
+_PAUSE_NOTICE = (
+    "A pause tag ([pause:1.5]) is parsed, but nothing renders it as silence: "
+    "the pause is not audible."
+)
+
+#: A language is parsed onto its segment and never switched: no pack here
+#: changes voice or language halfway through a script.
+_LANGUAGE_NOTICE = (
+    "A language tag ([de:Alice]) is parsed, but no Chatterbox pack switches "
+    "language per segment: the whole run speaks one language."
+)
+
+
+# ---------------------------------------------------------------------------
 # The whole pipeline
 # ---------------------------------------------------------------------------
+
+
+def _collect_notices(
+    segments: list[TextSegment],
+    spoken: str,
+    *,
+    turbo_tags: bool,
+) -> tuple[str, ...]:
+    """What the engine could not honour, said out loud rather than dropped.
+
+    Three things can be parsed and then not mean anything, and all three are
+    announced instead of swallowed:
+
+    * a Turbo tag on a pack that has no Turbo vocabulary -- the word is
+      spoken, but it will not do what it looks like it does;
+    * a pause, which lands on ``pause_after`` where nothing renders it;
+    * a language, which lands on ``segment.language`` where no pack switches.
+
+    A notice is never an error and never changes the audio.
+    """
+    notices: list[str] = []
+
+    if not turbo_tags:
+        # The tags are still in the spoken text -- they were kept, not eaten --
+        # so they are found there rather than remembered on the way through.
+        for match in _TURBO_TAG_IN_TEXT_RE.finditer(spoken):
+            notice = _turbo_tag_notice(match.group(1).lower())
+            if notice not in notices:
+                notices.append(notice)
+
+    if any(segment.pause_after for segment in segments):
+        notices.append(_PAUSE_NOTICE)
+
+    if any(segment.language for segment in segments):
+        notices.append(_LANGUAGE_NOTICE)
+
+    return tuple(notices)
 
 
 def plan_text(
@@ -726,13 +939,16 @@ def plan_text(
 
     Returns:
         A :class:`TextPlan`. Blank input yields an empty plan with one empty
-        chunk, so a caller never has to special-case it.
+        chunk, so a caller never has to special-case it. The plan's
+        ``notices`` say what the engine could not honour -- a Turbo tag on a
+        pack without the Turbo vocabulary, a pause that is never rendered, a
+        language that is never switched.
     """
     segments = split_segments(text or "", turbo_tags=turbo_tags)
 
     resolved: list[TextSegment] = []
     for segment in segments:
-        body, _tokens = resolve_v2_tokens(segment.text)
+        body, _tokens = resolve_v2_tokens(segment.text, turbo_tags=turbo_tags)
         segment.text = apply_crash_protection(body.strip(), crash_protection_template)
         resolved.append(segment)
 
@@ -748,4 +964,5 @@ def plan_text(
         chunks=tuple(chunks),
         chunk_method=method,
         char_count=len(spoken),
+        notices=_collect_notices(resolved, spoken, turbo_tags=turbo_tags),
     )

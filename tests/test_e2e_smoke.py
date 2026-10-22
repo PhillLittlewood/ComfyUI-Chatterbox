@@ -256,3 +256,52 @@ class TestVoiceConversion:
         assert bool(wav.isfinite().all())
         assert rms(wav) > RMS_FLOOR
         assert duration_seconds(wav) > MIN_SECONDS
+
+#: Long enough to be cut into more than one chunk at the default limit.
+CHUNKED_SCRIPT = " ".join([SHORT_SCRIPT] * 12)
+
+
+class TestChunkedRealGeneration:
+    """The chunked path, against the real model.
+
+    The same property as the unchunked test -- a longer script has to produce
+    longer audio -- but through the chunk loop and the join, so it also proves
+    that real waveforms survive being cut and put back together.
+    """
+
+    def test_a_long_script_grows_with_the_chunked_path(self, model) -> None:
+        from ComfyUI_Chatterbox.modules.generation import (  # noqa: PLC0415
+            generate_audio,
+        )
+
+        short, rate = generate_audio(
+            model, SHORT_SCRIPT, seed=1, max_chars_per_chunk=400
+        )
+        long, _ = generate_audio(
+            model, CHUNKED_SCRIPT, seed=1, max_chars_per_chunk=400
+        )
+
+        short_seconds = duration_seconds(short, rate)
+        long_seconds = duration_seconds(long, rate)
+        ratio = long_seconds / short_seconds
+
+        assert math.isfinite(ratio)
+        assert ratio > MIN_LENGTH_RATIO, (
+            f"12x the script produced only {ratio:.2f}x the audio "
+            f"({short_seconds:.2f}s -> {long_seconds:.2f}s) through the "
+            "chunked path"
+        )
+
+    def test_the_chunked_audio_is_not_silent(self, model) -> None:
+        from ComfyUI_Chatterbox.modules.generation import (  # noqa: PLC0415
+            generate_audio,
+        )
+
+        wave, _ = generate_audio(
+            model, CHUNKED_SCRIPT, seed=1, max_chars_per_chunk=400
+        )
+        level = rms(wave)
+        assert level > RMS_FLOOR, (
+            f"RMS {level:.5f} is at or below the silence floor {RMS_FLOOR}; "
+            "the chunked path produced audio of the right length but no signal"
+        )

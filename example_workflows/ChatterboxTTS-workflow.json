@@ -313,7 +313,11 @@
         1000,
         true,
         10,
-        1
+        1,
+        true,
+        400,
+        "auto",
+        100
       ],
       "widgets_values_named": {
         "model_pack_name": "chatterbox",
@@ -335,7 +339,11 @@
         "top_k": 1000,
         "normalize_loudness": true,
         "num_steps": 10,
-        "cfg_scale": 1
+        "cfg_scale": 1,
+        "enable_chunking": true,
+        "max_chars_per_chunk": 400,
+        "chunk_combination_method": "auto",
+        "silence_between_chunks_ms": 100
       },
       "color": "#232",
       "bgcolor": "#353"

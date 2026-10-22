@@ -60,6 +60,12 @@ APPENDED_WIDGETS: dict[str, tuple[str, ...]] = {
         # (2026-10-07). Flash packs ignore the Turbo ones and vice versa.
         "num_steps",
         "cfg_scale",
+        # Long-script controls, appended with the emotion-tag and chunking
+        # round (2026-10-22). Every family uses them.
+        "enable_chunking",
+        "max_chars_per_chunk",
+        "chunk_combination_method",
+        "silence_between_chunks_ms",
     ),
     VC_NODE_ID: (
         "device",

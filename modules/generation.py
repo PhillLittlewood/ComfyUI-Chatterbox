@@ -486,70 +486,86 @@ def force_offload_model(
 # ---------------------------------------------------------------------------
 
 
-def generate_audio(
-    model: Any,
-    text: str,
-    audio_prompt: Optional[dict] = None,
-    exaggeration: float = 0.5,
-    temperature: float = 0.8,
-    cfg_weight: float = 0.5,
-    repetition_penalty: float = 1.2,
-    min_p: float = 0.05,
-    top_p: float = 1.0,
-    seed: int = 0,
-    max_new_tokens: int = 1000,
-    flow_cfg_scale: float = 0.7,
-    use_watermark: bool = False,
-    top_k: int = 1000,
-    norm_loudness: bool = True,
-    num_steps: int = 10,
-    cfg_scale: float = 1.0,
-) -> tuple[torch.Tensor, int]:
-    """Synthesise ``text`` with a loaded Chatterbox TTS model.
+def _tts_family(model: Any) -> str:
+    """Which TTS family ``model`` belongs to: ``"flash"``, ``"turbo"`` or
+    ``"classic"``.
 
-    Turbo-family packs (``ChatterboxTurboTTS`` -- Turbo and Nano) are
-    dispatched to :func:`generate_turbo_audio`: their sampler is a top-k /
-    top-p pair with no CFG, so ``cfg_weight`` and ``min_p`` are ignored for
-    them, and ``top_k``/``norm_loudness`` only mean anything there. The
-    dispatch is by model class name -- the vendored package is never imported
-    by this module.
-
-    Args:
-        model: The ``ChatterboxTTS`` instance from :func:`load_chatterbox_model`.
-        text: The text to speak. Must be non-blank.
-        audio_prompt: Optional ComfyUI ``AUDIO`` dict to clone the voice from.
-            Downmixed, scrubbed and resampled to 24 kHz in memory, then handed
-            to the model as a waveform.
-        exaggeration: Expressiveness.
-        temperature: Sampling temperature.
-        cfg_weight: Classifier-free guidance weight.
-        repetition_penalty: Token repetition penalty.
-        min_p: Nucleus-sampling floor.
-        top_p: Nucleus-sampling ceiling.
-        seed: Seed; ``0`` means random.
-        max_new_tokens: Token budget. 25 tokens is roughly one second.
-        flow_cfg_scale: Flow-matching CFG scale for the mel decoder.
-        use_watermark: Whether to apply the PERTH watermark. Off by default
-            because ``perth`` is an optional dependency; the vendored models
-            take ``watermark=False`` rather than needing a stub object.
-
-    Returns:
-        ``(waveform[1, T] float32 on CPU, sample_rate)``.
-
-    Raises:
-        ValueError: ``text`` is blank, or the model returned no audio.
+    The dispatch key is the class name, exactly as it has always been: the
+    vendored package is never imported by this module, and the family decides
+    the sampler, the chunk semantics and whether the square-bracket tags are
+    the model's own vocabulary.
     """
-    if not text or not text.strip():
-        raise ValueError(
-            "Chatterbox needs some text to speak. The text input was empty."
-        )
+    name = type(model).__name__
+    if name == "ChatterboxFlashTTS":
+        return "flash"
+    if name == "ChatterboxTurboTTS":
+        return "turbo"
+    return "classic"
 
-    # Flash dispatch, before the classic progress bar: a block-diffusion
-    # decoder with no token budget to count.
-    if type(model).__name__ == "ChatterboxFlashTTS":
+
+def _chunk_seed(seed: int, index: int) -> int:
+    """The seed for chunk ``index`` of a run.
+
+    ``0`` is the widget's "random" convention and stays ``0``, so every chunk
+    is sampled from fresh noise. Any other seed is re-derived per chunk
+    (``seed + index``): one noise sample replayed for every chunk gives every
+    chunk the same prosody -- the audible artefact chunking is supposed to
+    avoid -- while the run as a whole stays reproducible, because the same
+    script and the same seed still produce the same chunk waveforms.
+    """
+    if not seed:
+        return 0
+    return (int(seed) + int(index)) % (2 ** 64)
+
+
+def _log_plan_notices(notices: tuple[str, ...]) -> None:
+    """Say once per run what the engine could not honour.
+
+    A notice is never an error and never changes the audio: it is the engine
+    admitting that a tag in the script is not going to do what it looks like
+    it does -- a Turbo tag on a pack without the Turbo vocabulary, a pause
+    that is parsed but never rendered, a language that is parsed but never
+    switched. Dropping them on the floor is what made the feature look
+    broken, so each one is logged as a warning, once per run.
+    """
+    for notice in notices:
+        logging.warning("[Chatterbox TTS] %s", notice)
+
+
+def _generate_one_chunk(
+    model: Any,
+    chunk: str,
+    *,
+    family: str,
+    audio_prompt: Optional[dict],
+    exaggeration: float,
+    temperature: float,
+    cfg_weight: float,
+    repetition_penalty: float,
+    min_p: float,
+    top_p: float,
+    seed: int,
+    max_new_tokens: int,
+    flow_cfg_scale: float,
+    use_watermark: bool,
+    top_k: int,
+    norm_loudness: bool,
+    num_steps: int,
+    cfg_scale: float,
+) -> tuple[torch.Tensor, int]:
+    """Synthesise one chunk with the sampler its family uses.
+
+    The family dispatch that used to sit at the top of :func:`generate_audio`
+    lives here now, so the chunk loop above it can call the same code once
+    per chunk. A Flash pack is a block-diffusion decoder with no token budget
+    to count; a Turbo pack has no ``max_new_tokens`` either, takes the top-k
+    sampler and keeps its square-bracket tags in the text for the tokenizer
+    to speak; everything else is the classic sampler.
+    """
+    if family == "flash":
         return generate_flash_audio(
             model,
-            text,
+            chunk,
             audio_prompt=audio_prompt,
             exaggeration=exaggeration,
             temperature=temperature,
@@ -558,19 +574,19 @@ def generate_audio(
             cfg_scale=cfg_scale,
         )
 
-    # Turbo-family dispatch, before the classic progress bar: Turbo has no
-    # max_new_tokens to count, and its square-bracket tags need resolving.
-    if type(model).__name__ == "ChatterboxTurboTTS":
-        plan = plan_text(text, turbo_tags=True)
+    if family == "turbo":
         return generate_turbo_audio(
             model,
-            plan.text,
+            chunk,
             audio_prompt=audio_prompt,
             temperature=temperature,
             top_k=top_k,
             top_p=top_p,
             repetition_penalty=repetition_penalty,
-            exaggeration=exaggeration,
+            # Turbo ignores exaggeration for sampling -- ``hp.emotion_adv`` is
+            # False on this family (``src/chatterbox/tts_turbo.py:259``) -- and
+            # upstream warns about every non-zero value, once per chunk.
+            exaggeration=0.0,
             norm_loudness=norm_loudness,
             seed=seed,
             use_watermark=use_watermark,
@@ -592,7 +608,7 @@ def generate_audio(
         try:
             with torch.no_grad():
                 waveform = model.generate(
-                    text,
+                    chunk,
                     audio_prompt_path=prompt,
                     exaggeration=exaggeration,
                     temperature=temperature,
@@ -617,7 +633,7 @@ def generate_audio(
         except Exception:
             logging.exception(
                 "[Chatterbox TTS] Generation failed for a %d-character text.",
-                len(text),
+                len(chunk),
             )
             raise
     finally:
@@ -632,13 +648,167 @@ def generate_audio(
     result = waveform.detach().to(device="cpu", dtype=torch.float32)
     if result.dim() == 1:
         result = result.unsqueeze(0)
+    return result, S3GEN_SAMPLE_RATE
+
+
+def generate_audio(
+    model: Any,
+    text: str,
+    audio_prompt: Optional[dict] = None,
+    exaggeration: float = 0.5,
+    temperature: float = 0.8,
+    cfg_weight: float = 0.5,
+    repetition_penalty: float = 1.2,
+    min_p: float = 0.05,
+    top_p: float = 1.0,
+    seed: int = 0,
+    max_new_tokens: int = 1000,
+    flow_cfg_scale: float = 0.7,
+    use_watermark: bool = False,
+    top_k: int = 1000,
+    norm_loudness: bool = True,
+    num_steps: int = 10,
+    cfg_scale: float = 1.0,
+    *,
+    enable_chunking: bool = True,
+    max_chars_per_chunk: int = 400,
+    chunk_combination_method: str = "auto",
+    silence_between_chunks_ms: int = 100,
+    crash_protection_template: str = "",
+) -> tuple[torch.Tensor, int]:
+    """Synthesise ``text`` with a loaded Chatterbox TTS model.
+
+    Turbo-family packs (``ChatterboxTurboTTS`` -- Turbo and Nano) are
+    dispatched to :func:`generate_turbo_audio`: their sampler is a top-k /
+    top-p pair with no CFG, so ``cfg_weight`` and ``min_p`` are ignored for
+    them, and ``top_k``/``norm_loudness`` only mean anything there. The
+    dispatch is by model class name -- the vendored package is never imported
+    by this module.
+
+    **Every family goes through the same text engine and the same chunk
+    loop.** The script is parsed once by :func:`modules.text_processing.plan_text`
+    -- which is what resolves ``[Alice]``, keeps Turbo's ``[laugh]`` tags for
+    the tokenizer and cuts the script into chunks -- and each chunk is then
+    synthesised with its own model call and joined with
+    :func:`combine_audio_chunks`. The chunks are what make a long script
+    speakable: one call per chunk means one token budget per chunk, so a
+    script of any length is spoken in full instead of running out of tokens
+    half way through.
+
+    Args:
+        model: The ``ChatterboxTTS`` instance from :func:`load_chatterbox_model`.
+        text: The text to speak. Must be non-blank.
+        audio_prompt: Optional ComfyUI ``AUDIO`` dict to clone the voice from.
+            Downmixed, scrubbed and resampled to 24 kHz in memory, then handed
+            to the model as a waveform.
+        exaggeration: Expressiveness.
+        temperature: Sampling temperature.
+        cfg_weight: Classifier-free guidance weight.
+        repetition_penalty: Token repetition penalty.
+        min_p: Nucleus-sampling floor.
+        top_p: Nucleus-sampling ceiling.
+        seed: Seed; ``0`` means random. A non-zero seed is re-derived per
+            chunk (``seed + chunk_index``), so the run stays reproducible
+            while the chunks do not all share one noise sample.
+        max_new_tokens: Token budget **per chunk**. 25 tokens is roughly one
+            second.
+        flow_cfg_scale: Flow-matching CFG scale for the mel decoder.
+        use_watermark: Whether to apply the PERTH watermark. Off by default
+            because ``perth`` is an optional dependency; the vendored models
+            take ``watermark=False`` rather than needing a stub object.
+        enable_chunking: Whether to cut the script into chunks at all. Off
+            means one model call for the whole script.
+        max_chars_per_chunk: Soft ceiling on one chunk, in characters.
+        chunk_combination_method: ``auto`` / ``concatenate`` /
+            ``silence_padding`` / ``crossfade``. ``auto`` resolves by the
+            length of the whole script.
+        silence_between_chunks_ms: The gap between chunks when the method is
+            ``silence_padding``.
+        crash_protection_template: Padding template for short segments.
+            Empty by default: the TTS node has no such widget, and turning it
+            on here would change every existing user's audio.
+
+    Returns:
+        ``(waveform[1, T] float32 on CPU, sample_rate)``.
+
+    Raises:
+        ValueError: ``text`` is blank, the script held nothing but tags, or
+            the model returned no audio.
+    """
+    if not text or not text.strip():
+        raise ValueError(
+            "Chatterbox needs some text to speak. The text input was empty."
+        )
+
+    family = _tts_family(model)
+
+    # One plan for every family. On a Turbo pack the square-bracket tags are
+    # kept verbatim for the tokenizer; on every other pack they stay literal
+    # text and are reported as a notice, so nothing is swallowed silently.
+    plan = plan_text(
+        text,
+        turbo_tags=(family == "turbo"),
+        crash_protection_template=crash_protection_template,
+        enable_chunking=enable_chunking,
+        max_chars_per_chunk=max_chars_per_chunk,
+        chunk_combination_method=chunk_combination_method,
+        silence_between_chunks_ms=silence_between_chunks_ms,
+    )
+    _log_plan_notices(plan.notices)
+
+    if not plan.text.strip():
+        raise ValueError(
+            "Chatterbox needs some text to speak. The script held nothing but "
+            "tags, so there is nothing left to say."
+        )
+
+    chunks = plan.chunks or (plan.text,)
+    logging.info(
+        "[Chatterbox TTS] Synthesising %d chunk(s) of %d characters, joined "
+        "with '%s'.",
+        len(chunks),
+        plan.char_count,
+        plan.chunk_method,
+    )
+
+    waveforms: list[torch.Tensor] = []
+    sample_rate = S3GEN_SAMPLE_RATE
+    for index, chunk in enumerate(chunks):
+        waveform, sample_rate = _generate_one_chunk(
+            model,
+            chunk,
+            family=family,
+            audio_prompt=audio_prompt,
+            exaggeration=exaggeration,
+            temperature=temperature,
+            cfg_weight=cfg_weight,
+            repetition_penalty=repetition_penalty,
+            min_p=min_p,
+            top_p=top_p,
+            seed=_chunk_seed(seed, index),
+            max_new_tokens=max_new_tokens,
+            flow_cfg_scale=flow_cfg_scale,
+            use_watermark=use_watermark,
+            top_k=top_k,
+            norm_loudness=norm_loudness,
+            num_steps=num_steps,
+            cfg_scale=cfg_scale,
+        )
+        waveforms.append(waveform)
+
+    joined = combine_audio_chunks(
+        waveforms,
+        sample_rate,
+        method=plan.chunk_method,
+        silence_between_chunks_ms=silence_between_chunks_ms,
+    )
 
     logging.info(
         "[Chatterbox TTS] Generated %.2f s of audio at %d Hz.",
-        result.shape[-1] / float(S3GEN_SAMPLE_RATE),
-        S3GEN_SAMPLE_RATE,
+        joined.shape[-1] / float(sample_rate),
+        sample_rate,
     )
-    return result, S3GEN_SAMPLE_RATE
+    return joined, sample_rate
 
 
 def convert_voice_audio(
