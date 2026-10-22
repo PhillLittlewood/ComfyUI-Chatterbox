@@ -160,10 +160,40 @@ def get_model_pack_entries() -> List[Tuple[str, str]]:
 def get_chatterbox_model_pack_names() -> List[str]:
     """Every selectable pack name, default pack first.
 
-    Never returns an empty list: when nothing is on disk the default pack is
-    still offered, because selecting it is what triggers the download.
+    The list holds the packs that are **on disk** *and* the official packs
+    that **can be downloaded**. A fresh install has no models folder at all,
+    and a dropdown built from the filesystem alone then offers nothing to
+    pick -- and a pack that cannot be picked cannot be downloaded. The
+    registry knows every official pack, so it supplies the names the disk
+    does not have yet.
+
+    Local names come first, in the order the scan produced them (the
+    synthesized Turbo-family entry next to its folder), then the official
+    names that are not on disk yet. The default pack is hoisted to index 0
+    either way, so a saved workflow that carries no widget value lands on the
+    official voice rather than on whatever sorts first.
+
+    Never returns an empty list: the default pack is always offered, because
+    selecting it is what triggers the download.
     """
-    names = [name for name, _path in get_model_pack_entries()]
+    from .model_info import official_pack_names
+
+    names: List[str] = []
+    seen: set = set()
+    for name, _path in get_model_pack_entries():
+        if name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    for name in official_pack_names():
+        if name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+
+    if DEFAULT_MODEL_PACK_NAME in names:
+        names.remove(DEFAULT_MODEL_PACK_NAME)
+        names.insert(0, DEFAULT_MODEL_PACK_NAME)
     if not names:
         return [DEFAULT_MODEL_PACK_NAME]
     return names

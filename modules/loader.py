@@ -881,9 +881,21 @@ class ChatterboxLoader:
         ]
         patterns = None
         if entry.get("files"):
+            # The registry's file list is the pack's usual content, but the
+            # checkpoint the caller resolved is the one file the pack cannot be
+            # assembled without -- and it is not always on that list (the
+            # classic entry names the monolingual set, while the multilingual
+            # loader asks for a T3 variant out of the same repository). So
+            # whatever the caller requires that the list does not already name
+            # is fetched too: a pack that is not on disk yet has to arrive
+            # complete, not arrive and still be missing a checkpoint.
+            candidates = list(entry["files"])
+            for name in required:
+                if name not in candidates:
+                    candidates.append(name)
             patterns = [
                 name
-                for name in entry["files"]
+                for name in candidates
                 if name not in SHARED_ASSET_FILES or name in unique
             ]
         logging.info(

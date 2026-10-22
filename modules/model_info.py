@@ -44,6 +44,7 @@ __all__ = [
     "describe_model_dir",
     "infer_pack_architecture",
     "pack_dir_entries",
+    "official_pack_names",
     "NANO_ENTRY_SUFFIX",
     "is_chatterbox_model_dir",
     "scan_chatterbox_models",
@@ -97,8 +98,16 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
     },
     # The multilingual family: same repo, same voice encoder, different T3
     # weights. v2 is upstream's default; v3 is the newer, more stable one.
+    #
+    # These three are **checkpoints, not packs**: they are T3 variants that
+    # live inside the classic repository next to the default pack's weights,
+    # and the multilingual loader picks one of them out of a pack directory
+    # rather than downloading a directory of its own. So they are never
+    # offered in the pack dropdown -- ``is_pack: False`` says so, and
+    # :func:`official_pack_names` skips them. Every other entry is a pack.
     "T3_v1": {
         "repo_id": CHATTERBOX_REPO_ID,
+        "is_pack": False,
         "architecture": "chatterbox_multilingual",
         "sample_rate": 24000,
         "size_gb": 2.7,
@@ -107,6 +116,7 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
     },
     "T3_v2": {
         "repo_id": CHATTERBOX_REPO_ID,
+        "is_pack": False,
         "architecture": "chatterbox_multilingual",
         "sample_rate": 24000,
         "size_gb": 2.7,
@@ -115,6 +125,7 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
     },
     "T3_v3": {
         "repo_id": CHATTERBOX_REPO_ID,
+        "is_pack": False,
         "architecture": "chatterbox_multilingual",
         "sample_rate": 24000,
         "size_gb": 2.7,
@@ -255,6 +266,33 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
 AVAILABLE_CHATTERBOX_MODELS: Dict[str, Dict[str, Any]] = {
     name: {"type": "official", **config} for name, config in MODEL_CONFIGS.items()
 }
+
+
+def official_pack_names() -> List[str]:
+    """Every registry entry that is a downloadable pack, in registry order.
+
+    This is the answer to "what can the user download?", and it is read from
+    the registry rather than from a second, hand-kept list -- so a pack added
+    to :data:`MODEL_CONFIGS` is offered by the dropdown without anyone
+    remembering to list it in a second place.
+
+    An entry is a pack unless it says otherwise: ``is_pack: False`` marks the
+    entries that are **not** directories of their own. The ``T3_v*`` entries
+    are the case in point -- T3 checkpoints that live inside the classic
+    repository and are picked out of a pack directory by the multilingual
+    loader, never downloaded as a pack. A missing ``is_pack`` key means "is a
+    pack", so a new entry is downloadable by default.
+
+    Only entries with a ``repo_id`` are listed: a pack without a repository
+    cannot be fetched, and offering it would be a promise the loader cannot
+    keep.
+    """
+    return [
+        name
+        for name, config in MODEL_CONFIGS.items()
+        if config.get("is_pack", True) and config.get("repo_id")
+    ]
+
 
 # ── Recognised architectures ─────────────────────────────────────────
 

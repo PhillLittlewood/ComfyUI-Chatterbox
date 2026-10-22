@@ -28,6 +28,29 @@ from ComfyUI_Chatterbox.modules.model_discovery import (
 )
 
 
+#: Every official pack the dropdown must offer, in the registry's order.
+#:
+#: Written out rather than read back from the registry on purpose: a test
+#: that derives its expectation from the code under test proves nothing. A
+#: pack dropped from the table must fail here, not quietly follow the drop.
+OFFICIAL_PACK_NAMES = (
+    "resembleai_default_voice",
+    "chatterbox-multilingual-zh-cmn",
+    "chatterbox-multilingual-es-mx-latam",
+    "chatterbox-multilingual-es-es",
+    "chatterbox-multilingual-pt-br",
+    "chatterbox-multilingual-pt-pt",
+    "chatterbox-multilingual-hi",
+    "chatterbox-turbo",
+    "chatterbox-turbo-nano",
+    "chatterbox-flash",
+)
+
+#: The official names other than the default, i.e. the ones appended after
+#: the local packs in a merged list.
+ADDITIONAL_OFFICIAL_PACK_NAMES = OFFICIAL_PACK_NAMES[1:]
+
+
 @pytest.fixture(autouse=True)
 def clean_cache():
     invalidate_cache()
@@ -85,38 +108,147 @@ class TestPackNames:
     def test_lists_every_subdirectory(self, models_root) -> None:
         (models_root / "alpha").mkdir()
         (models_root / "beta").mkdir()
-        assert get_chatterbox_model_pack_names() == ["alpha", "beta"]
+        assert get_chatterbox_model_pack_names() == [
+            DEFAULT_MODEL_PACK_NAME,
+            "alpha",
+            "beta",
+            *ADDITIONAL_OFFICIAL_PACK_NAMES,
+        ]
 
     def test_ignores_loose_files(self, models_root) -> None:
         (models_root / "alpha").mkdir()
         (models_root / "stray.txt").write_text("x", encoding="utf-8")
-        assert get_chatterbox_model_pack_names() == ["alpha"]
+        assert get_chatterbox_model_pack_names() == [
+            DEFAULT_MODEL_PACK_NAME,
+            "alpha",
+            *ADDITIONAL_OFFICIAL_PACK_NAMES,
+        ]
 
     def test_a_partially_downloaded_pack_is_still_offered(self, models_root) -> None:
         """The pack must stay selectable, or the download can never finish it."""
         half = models_root / "half"
         half.mkdir()
         (half / "ve.safetensors.incomplete").write_bytes(b"x")
-        assert get_chatterbox_model_pack_names() == ["half"]
+        assert get_chatterbox_model_pack_names() == [
+            DEFAULT_MODEL_PACK_NAME,
+            "half",
+            *ADDITIONAL_OFFICIAL_PACK_NAMES,
+        ]
 
     def test_the_default_pack_is_hoisted_to_index_zero(self, models_root) -> None:
         for name in ("aaa", "zzz", DEFAULT_MODEL_PACK_NAME, "mmm"):
             (models_root / name).mkdir()
         names = get_chatterbox_model_pack_names()
         assert names[0] == DEFAULT_MODEL_PACK_NAME
-        assert sorted(names) == sorted(["aaa", "zzz", DEFAULT_MODEL_PACK_NAME, "mmm"])
+        assert names[1:4] == ["aaa", "mmm", "zzz"]
+        assert sorted(names) == sorted(
+            ["aaa", "zzz", "mmm", *OFFICIAL_PACK_NAMES]
+        )
 
     def test_an_empty_root_still_offers_the_default(self, models_root) -> None:
-        assert get_chatterbox_model_pack_names() == [DEFAULT_MODEL_PACK_NAME]
+        """An empty root offers every official pack, the default first."""
+        assert get_chatterbox_model_pack_names() == list(OFFICIAL_PACK_NAMES)
 
     def test_a_missing_root_still_offers_the_default(self, tmp_path, monkeypatch) -> None:
         import folder_paths
 
         monkeypatch.setattr(folder_paths, "get_folder_paths", lambda name: [str(tmp_path / "gone")])
-        assert get_chatterbox_model_pack_names() == [DEFAULT_MODEL_PACK_NAME]
+        assert get_chatterbox_model_pack_names() == list(OFFICIAL_PACK_NAMES)
 
     def test_the_names_are_the_frozen_default(self) -> None:
         assert DEFAULT_MODEL_PACK_NAME == "resembleai_default_voice"
+
+
+# ---------------------------------------------------------------------------
+# The dropdown offers what can be downloaded, not only what is on disk
+# ---------------------------------------------------------------------------
+
+
+class TestDownloadablePacksAreOffered:
+    """A fresh install has no models folder, and a dropdown built from the
+    filesystem alone then offers nothing to pick -- and a pack that cannot be
+    picked cannot be downloaded. The registry knows every official pack, so
+    the names list must carry them whether or not the folder exists yet."""
+
+    def test_an_empty_root_offers_every_official_pack(self, models_root) -> None:
+        names = get_chatterbox_model_pack_names()
+        for name in OFFICIAL_PACK_NAMES:
+            assert name in names, f"the downloadable pack '{name}' is not offered"
+
+    def test_the_official_packs_are_offered_in_registry_order(self, models_root) -> None:
+        """The order is the registry's, so the list reads like the table."""
+        assert get_chatterbox_model_pack_names() == list(OFFICIAL_PACK_NAMES)
+
+    def test_a_missing_root_offers_the_official_packs_too(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        import folder_paths
+
+        monkeypatch.setattr(
+            folder_paths, "get_folder_paths", lambda name: [str(tmp_path / "gone")]
+        )
+        names = get_chatterbox_model_pack_names()
+        assert all(name in names for name in OFFICIAL_PACK_NAMES)
+
+    def test_local_packs_and_official_packs_are_merged(self, models_root) -> None:
+        """A community pack on disk and the official ones that are not."""
+        (models_root / "my-voice").mkdir()
+        names = get_chatterbox_model_pack_names()
+
+        assert "my-voice" in names
+        for name in OFFICIAL_PACK_NAMES:
+            assert name in names
+        assert names.index("my-voice") < names.index("chatterbox-flash")
+
+    def test_the_merge_holds_no_duplicates(self, models_root) -> None:
+        (models_root / "my-voice").mkdir()
+        names = get_chatterbox_model_pack_names()
+
+        assert len(names) == len(set(names))
+
+    def test_a_local_directory_named_after_an_official_pack_is_not_duplicated(
+        self, models_root
+    ) -> None:
+        """The same pack, downloaded and unpacked in place, is one entry."""
+        (models_root / "chatterbox-flash").mkdir()
+        names = get_chatterbox_model_pack_names()
+
+        assert names.count("chatterbox-flash") == 1
+        assert len(names) == len(set(names))
+
+    def test_both_turbo_family_names_are_offered(self, models_root) -> None:
+        """Turbo and Nano are two dropdown entries over one folder."""
+        names = get_chatterbox_model_pack_names()
+
+        assert "chatterbox-turbo" in names
+        assert "chatterbox-turbo-nano" in names
+
+    def test_the_t3_checkpoints_are_not_offered(self, models_root) -> None:
+        """``T3_v1``/``T3_v2``/``T3_v3`` are checkpoints inside the classic
+        repository, not packs of their own: there is no directory to download
+        them into, and the multilingual loader picks one out of a pack."""
+        names = get_chatterbox_model_pack_names()
+
+        for name in ("T3_v1", "T3_v2", "T3_v3"):
+            assert name not in names
+
+    def test_the_list_is_never_empty(self, tmp_path, monkeypatch) -> None:
+        import folder_paths
+
+        monkeypatch.setattr(
+            folder_paths, "get_folder_paths", lambda name: [str(tmp_path / "gone")]
+        )
+        assert get_chatterbox_model_pack_names()
+
+    def test_the_entries_are_untouched_by_the_merge(self, models_root) -> None:
+        """``get_model_pack_entries`` is the *path* contract: the registry
+        registers local packs from it. An official name with no directory
+        behind it must never leak in there."""
+        (models_root / "my-voice").mkdir()
+        entries = get_model_pack_entries()
+
+        assert entries == [("my-voice", str(models_root / "my-voice"))]
+        assert not {name for name, _path in entries} & set(OFFICIAL_PACK_NAMES)
 
 
 class TestPackEntries:
@@ -175,7 +307,12 @@ class TestCaching:
         first = get_chatterbox_model_pack_names()
         second = get_chatterbox_model_pack_names()
 
-        assert first == second == ["alpha", "beta"]
+        assert first == second == [
+            DEFAULT_MODEL_PACK_NAME,
+            "alpha",
+            "beta",
+            *ADDITIONAL_OFFICIAL_PACK_NAMES,
+        ]
         assert len(calls) == 1, (
             f"the models root was scanned {len(calls)} times for an unchanged tree; "
             "the cache is not working"
@@ -185,13 +322,22 @@ class TestCaching:
         (models_root / "alpha").mkdir()
         calls = self._count_scandir(monkeypatch)
 
-        assert get_chatterbox_model_pack_names() == ["alpha"]
+        assert get_chatterbox_model_pack_names() == [
+            DEFAULT_MODEL_PACK_NAME,
+            "alpha",
+            *ADDITIONAL_OFFICIAL_PACK_NAMES,
+        ]
         assert len(calls) == 1
 
         (models_root / "beta").mkdir()
         touch_root(models_root)
 
-        assert get_chatterbox_model_pack_names() == ["alpha", "beta"]
+        assert get_chatterbox_model_pack_names() == [
+            DEFAULT_MODEL_PACK_NAME,
+            "alpha",
+            "beta",
+            *ADDITIONAL_OFFICIAL_PACK_NAMES,
+        ]
         assert len(calls) == 2
 
     def test_the_cache_key_is_the_root_mtime(self, models_root) -> None:
@@ -205,8 +351,8 @@ class TestCaching:
         monkeypatch.setattr(folder_paths, "get_folder_paths", lambda name: [str(tmp_path / "gone")])
         calls = self._count_scandir(monkeypatch)
 
-        assert get_chatterbox_model_pack_names() == [DEFAULT_MODEL_PACK_NAME]
-        assert get_chatterbox_model_pack_names() == [DEFAULT_MODEL_PACK_NAME]
+        assert get_chatterbox_model_pack_names() == list(OFFICIAL_PACK_NAMES)
+        assert get_chatterbox_model_pack_names() == list(OFFICIAL_PACK_NAMES)
         assert len(calls) == 1, (
             "a models root that does not exist must be cached too, otherwise "
             "every schema rebuild pays a failed directory open"
@@ -234,10 +380,18 @@ class TestCaching:
 
         roots = {"value": str(tmp_path / "one")}
         monkeypatch.setattr(folder_paths, "get_folder_paths", lambda name: [roots["value"]])
-        assert get_chatterbox_model_pack_names() == ["from_one"]
+        assert get_chatterbox_model_pack_names() == [
+            DEFAULT_MODEL_PACK_NAME,
+            "from_one",
+            *ADDITIONAL_OFFICIAL_PACK_NAMES,
+        ]
 
         roots["value"] = str(tmp_path / "two")
-        assert get_chatterbox_model_pack_names() == ["from_two"]
+        assert get_chatterbox_model_pack_names() == [
+            DEFAULT_MODEL_PACK_NAME,
+            "from_two",
+            *ADDITIONAL_OFFICIAL_PACK_NAMES,
+        ]
 
 
 class TestFrozenConstants:
@@ -362,3 +516,155 @@ class TestTurboFamilyFolderIsOfferedTwice:
         resolved = ChatterboxLoader.resolve_pack_dir("chatterbox-turbo-nano")
 
         assert resolved == str(models_root / "chatterbox-turbo")
+
+
+# ---------------------------------------------------------------------------
+# An offered pack that is not on disk yet resolves, and downloads
+# ---------------------------------------------------------------------------
+
+
+class TestAnAbsentOfficialPackResolves:
+    """The offered name has to mean something: it must resolve to the
+    directory the pack will be downloaded into, and the registry entry has to
+    name the repository the download comes from."""
+
+    @pytest.mark.parametrize(
+        "name,folder",
+        [
+            ("resembleai_default_voice", "resembleai_default_voice"),
+            ("chatterbox-multilingual-zh-cmn", "chatterbox-multilingual-zh-cmn"),
+            ("chatterbox-multilingual-es-mx-latam", "chatterbox-multilingual-es-mx-latam"),
+            ("chatterbox-multilingual-es-es", "chatterbox-multilingual-es-es"),
+            ("chatterbox-multilingual-pt-br", "chatterbox-multilingual-pt-br"),
+            ("chatterbox-multilingual-pt-pt", "chatterbox-multilingual-pt-pt"),
+            ("chatterbox-multilingual-hi", "chatterbox-multilingual-hi"),
+            ("chatterbox-turbo", "chatterbox-turbo"),
+            # Nano is a dropdown entry over Turbo's folder.
+            ("chatterbox-turbo-nano", "chatterbox-turbo"),
+            ("chatterbox-flash", "chatterbox-flash"),
+        ],
+    )
+    def test_it_resolves_to_its_download_directory(
+        self, models_root, name: str, folder: str
+    ) -> None:
+        from ComfyUI_Chatterbox.modules.loader import ChatterboxLoader
+
+        resolved = ChatterboxLoader.resolve_pack_dir(name)
+
+        assert resolved == str(models_root / folder)
+        assert not os.path.exists(resolved), (
+            "the pack was supposed to be absent -- the test would prove "
+            "nothing if it were already on disk"
+        )
+
+    @pytest.mark.parametrize("name", OFFICIAL_PACK_NAMES)
+    def test_its_registry_entry_names_a_repository(self, name: str) -> None:
+        """Without a ``repo_id`` the download cannot run at all."""
+        from ComfyUI_Chatterbox.modules.model_info import MODEL_CONFIGS
+
+        assert MODEL_CONFIGS[name].get("repo_id"), (
+            f"the offered pack '{name}' has no repo_id, so it can never be "
+            "downloaded"
+        )
+
+
+class TestAnAbsentPackIsDownloaded:
+    """Picking a pack that is not on disk yet must download it -- from the
+    registry's repository and file list -- instead of failing with a
+    'missing files' error."""
+
+    @staticmethod
+    def _fake_downloader(downloads: list):
+        def fake_download(model_name, repo_id, local_dir, client_id=None, allow_patterns=None):
+            downloads.append(
+                {
+                    "model_name": model_name,
+                    "repo_id": repo_id,
+                    "local_dir": local_dir,
+                    "allow_patterns": list(allow_patterns or []),
+                }
+            )
+            os.makedirs(local_dir, exist_ok=True)
+            for name in allow_patterns or []:
+                with open(os.path.join(local_dir, name), "wb") as handle:
+                    handle.write(b"\x00" * 4)
+
+        return fake_download
+
+    @staticmethod
+    def _fake_shared_fetch(repo_id, filename, local_dir):
+        os.makedirs(local_dir, exist_ok=True)
+        path = os.path.join(local_dir, filename)
+        with open(path, "wb") as handle:
+            handle.write(b"\x00" * 4)
+        return path
+
+    def test_an_absent_slp_pack_is_downloaded(self, models_root, monkeypatch) -> None:
+        """The multilingual node's Single Language Packs are offered whether
+        or not they are on disk; selecting one has to fetch it."""
+        import torch
+
+        from ComfyUI_Chatterbox.modules.loader import ChatterboxLoader
+
+        downloads: list = []
+        monkeypatch.setattr(
+            ChatterboxLoader,
+            "download_pack",
+            staticmethod(self._fake_downloader(downloads)),
+        )
+        monkeypatch.setattr(
+            "huggingface_hub.hf_hub_download", self._fake_shared_fetch
+        )
+
+        pack_dir = ChatterboxLoader.resolve_pack_dir("chatterbox-multilingual-zh-cmn")
+        model = ChatterboxLoader.load_multilingual_model(
+            "chatterbox-multilingual-zh-cmn",
+            "t3_mtl23ls_v3.safetensors",
+            torch.device("cpu"),
+            model_path=pack_dir,
+        )
+
+        assert downloads, "the absent pack was never downloaded"
+        call = downloads[0]
+        assert call["repo_id"] == "ResembleAI/Chatterbox-Multilingual-zh-cmn"
+        assert call["local_dir"] == pack_dir
+        assert "t3_zh_cmn.safetensors" in call["allow_patterns"], (
+            "the pack's own T3 checkpoint must be part of the fetch"
+        )
+        assert model is not None
+
+    def test_the_multilingual_checkpoint_is_fetched_for_the_classic_pack(
+        self, models_root, monkeypatch
+    ) -> None:
+        """The classic repository also holds the multilingual T3 weights, but
+        the classic entry's file list names the monolingual set. Without the
+        resolved checkpoint in the fetch the pack would download and still be
+        missing it -- a 'missing files' error the user cannot act on."""
+        import torch
+
+        from ComfyUI_Chatterbox.modules.constants import CHATTERBOX_REPO_ID
+        from ComfyUI_Chatterbox.modules.loader import ChatterboxLoader
+
+        downloads: list = []
+        monkeypatch.setattr(
+            ChatterboxLoader,
+            "download_pack",
+            staticmethod(self._fake_downloader(downloads)),
+        )
+        monkeypatch.setattr(
+            "huggingface_hub.hf_hub_download", self._fake_shared_fetch
+        )
+
+        ChatterboxLoader.load_multilingual_model(
+            DEFAULT_MODEL_PACK_NAME,
+            "t3_mtl23ls_v3.safetensors",
+            torch.device("cpu"),
+            model_path=str(models_root / DEFAULT_MODEL_PACK_NAME),
+        )
+
+        assert downloads, "the absent pack was never downloaded"
+        call = downloads[0]
+        assert call["repo_id"] == CHATTERBOX_REPO_ID
+        assert "t3_mtl23ls_v3.safetensors" in call["allow_patterns"], (
+            "the multilingual checkpoint the loader asked for was not fetched"
+        )

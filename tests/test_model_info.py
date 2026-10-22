@@ -110,6 +110,45 @@ class TestOfficialRegistry:
             assert known, f"{name} lists no recognised weight file: {config['files']}"
 
 
+class TestWhatIsAPack:
+    """The registry holds two kinds of entry: downloadable packs, and the T3
+    checkpoints that live inside the classic repository and are picked out of
+    a pack directory rather than downloaded as one. The dropdown may only
+    offer the former."""
+
+    def test_the_t3_checkpoints_are_marked_as_not_packs(self) -> None:
+        for name in ("T3_v1", "T3_v2", "T3_v3"):
+            assert MODEL_CONFIGS[name].get("is_pack") is False, (
+                f"{name} is a checkpoint inside a pack, not a pack: it must not "
+                "be offered as a downloadable pack"
+            )
+
+    def test_every_other_entry_is_a_pack(self) -> None:
+        for name, config in MODEL_CONFIGS.items():
+            if name in ("T3_v1", "T3_v2", "T3_v3"):
+                continue
+            assert config.get("is_pack", True) is True, f"{name} is not marked as a pack"
+
+    def test_official_pack_names_lists_every_downloadable_pack(self) -> None:
+        assert model_info.official_pack_names() == [
+            name
+            for name, config in MODEL_CONFIGS.items()
+            if config.get("is_pack", True)
+        ]
+
+    def test_the_pack_list_carries_no_checkpoint(self) -> None:
+        names = model_info.official_pack_names()
+        for name in ("T3_v1", "T3_v2", "T3_v3"):
+            assert name not in names
+
+    def test_every_offered_pack_can_be_downloaded(self) -> None:
+        for name in model_info.official_pack_names():
+            assert MODEL_CONFIGS[name].get("repo_id"), (
+                f"the offered pack '{name}' has no repo_id, so it can never be "
+                "downloaded"
+            )
+
+
 class TestLocalRegistry:
     def test_a_registered_local_model_carries_its_path(self, tmp_path) -> None:
         pack = write_pack(tmp_path, "mine")
