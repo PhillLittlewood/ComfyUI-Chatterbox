@@ -308,3 +308,68 @@ class TestNoVendoredImportAtModuleScope:
             source = inspect.getsource(module)
             assert "import chatterbox" not in source
             assert "from chatterbox" not in source
+
+class TestChunkingWidgetSpec:
+    """The four long-script widgets, pinned by value.
+
+    The chunking round appended ``enable_chunking``, ``max_chars_per_chunk``,
+    ``chunk_combination_method`` and ``silence_between_chunks_ms`` to
+    ``ChatterboxTTS``. The append itself is covered by the frozen-block
+    assertions above; these pin **what the widgets are**. Without them a
+    changed default, a moved range or a dropped combo entry would pass every
+    other test in this file, and a user would silently get different chunk
+    sizes than the ones the node documents.
+    """
+
+    @staticmethod
+    def _widget(name: str):
+        """The ``(type, config)`` pair the core registers for ``name``."""
+        info = ChatterboxTTSNode.GET_NODE_INFO_V1()
+        for section in ("required", "optional"):
+            entry = info["input"][section].get(name)
+            if entry is not None:
+                return entry
+        raise AssertionError(f"{name!r} is not an input of {TTS_NODE_ID}")
+
+    def test_the_chunking_widgets_carry_the_documented_defaults_and_ranges(self) -> None:
+        """Default, min, max and step of every numeric control.
+
+        The values are the ones the node's own tooltips quote, so a widget
+        that drifts from its documentation fails here.
+        """
+        enable = self._widget("enable_chunking")
+        assert enable[0] == "BOOLEAN"
+        assert enable[1]["default"] is True
+
+        size = self._widget("max_chars_per_chunk")
+        assert size[0] == "INT"
+        assert size[1]["default"] == 400
+        assert size[1]["min"] == 100
+        assert size[1]["max"] == 1000
+        assert size[1]["step"] == 50
+
+        silence = self._widget("silence_between_chunks_ms")
+        assert silence[0] == "INT"
+        assert silence[1]["default"] == 100
+        assert silence[1]["min"] == 0
+        assert silence[1]["max"] == 500
+        assert silence[1]["step"] == 25
+
+        method = self._widget("chunk_combination_method")
+        assert method[0] == "COMBO"
+        assert method[1]["default"] == "auto"
+
+    def test_the_chunk_combination_method_offers_exactly_the_four_documented_names(self) -> None:
+        """The combo carries the four documented names, in order.
+
+        Exact list equality: a fifth entry, a renamed one or a reordering
+        fails. ``auto`` must stay first, because it is the default and the
+        other three are only reachable by an explicit choice.
+        """
+        options = self._widget("chunk_combination_method")[1]["options"]
+        assert list(options) == [
+            "auto",
+            "concatenate",
+            "silence_padding",
+            "crossfade",
+        ]
