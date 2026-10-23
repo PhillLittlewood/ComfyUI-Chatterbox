@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from ComfyUI_Chatterbox.modules.text_processing import chunk_text
+from ComfyUI_Chatterbox.modules.text_processing import TURBO_TAGS, chunk_text
 
 
 def _assert_no_split_tag(chunks: list[str]) -> None:
@@ -116,6 +116,32 @@ class TestTagSafeBoundaries:
         _assert_no_split_tag(chunks)
         assert "[laugh]" in "".join(chunks)
         assert "[clear throat]" in "".join(chunks)
+
+    @pytest.mark.parametrize("tag", TURBO_TAGS)
+    def test_no_turbo_tag_is_split_at_a_roomy_limit(self, tag: str) -> None:
+        """Every name in the vocabulary, not just the one that used to be there.
+
+        The chunker is bracket-agnostic -- it moves a cut out of any ``[...]``
+        run -- so this is proof over the whole vocabulary rather than new
+        logic. A name that arrives upstream tomorrow is covered by the same
+        test.
+        """
+        text = "x" * 398 + f"[{tag}]" + "y" * 500
+        chunks = chunk_text(text, 400)
+        _assert_no_split_tag(chunks)
+        assert f"[{tag}]" in "".join(chunks)
+
+    @pytest.mark.parametrize("tag", TURBO_TAGS)
+    def test_no_turbo_tag_is_split_at_a_tight_limit(self, tag: str) -> None:
+        """The same guarantee when the ceiling lands inside the tag itself.
+
+        A tag longer than the limit by itself stays whole and the chunk grows
+        past the ceiling -- splitting it would be worse than exceeding it.
+        """
+        text = f"[{tag}] and the rest of the script goes on here"
+        chunks = chunk_text(text, 12)
+        _assert_no_split_tag(chunks)
+        assert f"[{tag}]" in "".join(chunks)
 
 
 class TestNothingIsLost:

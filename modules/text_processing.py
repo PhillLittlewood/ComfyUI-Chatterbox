@@ -23,7 +23,7 @@ because a ``<giggle>`` is only rewritten once the character names around it have
 resolved -- rewriting it first is what makes ``[Alice] <giggle>`` lose its
 character.
 
-The nine Turbo tag names (``[laugh]``, ``[clear throat]``, ...) are claimed
+The nineteen Turbo tag names (``[laugh]``, ``[clear throat]``, ...) are claimed
 **before** stage 1, on every path. A Turbo pack needs them kept verbatim for
 the tokenizer, and a pack that has no Turbo vocabulary still has to say the
 word rather than swallow it as a voice name -- so the tag is never a
@@ -35,7 +35,7 @@ Three rules that follow from the syntax and are worth stating up front:
   token set's.** They are deliberately not interchangeable. ``<giggle>`` is a
   v2 special token; ``[laugh]`` is a Turbo paralinguistic tag, and it is only
   *recognised* as one when the caller says it is speaking to a Turbo model.
-  On any other pack the nine Turbo names are kept as **literal text** and
+  On any other pack the nineteen Turbo names are kept as **literal text** and
   reported as a notice -- swallowing ``[laugh]`` as a voice name would take the
   word out of the speech without saying so. Every other bare bracket stays a
   *character name*, which is what upstream does.
@@ -63,6 +63,8 @@ __all__ = [
     "CHUNK_COMBINATION_METHODS",
     "AUTO_CHUNK_THRESHOLDS",
     "PARAM_ALIASES",
+    "TURBO_SOUND_TAGS",
+    "TURBO_EMOTION_TAGS",
     "TURBO_TAGS",
     "TURBO_TAG_V2_SPELLING",
     "V2_SPECIAL_TOKENS",
@@ -135,10 +137,10 @@ PARAM_ALIASES: dict[str, str] = {
     "top_k": "top_k",
 }
 
-#: Turbo's own paralinguistic tags, in square brackets. A *different* vocabulary
-#: from the v2 angle-bracket set below; Turbo's tokenizer was trained on these
-#: spellings and has never seen ``<giggle>``.
-TURBO_TAGS: tuple[str, ...] = (
+#: Turbo's own paralinguistic **sound** tags, in square brackets. A *different*
+#: vocabulary from the v2 angle-bracket set below; Turbo's tokenizer was trained
+#: on these spellings and has never seen ``<giggle>``.
+TURBO_SOUND_TAGS: tuple[str, ...] = (
     "laugh",
     "sigh",
     "gasp",
@@ -149,6 +151,30 @@ TURBO_TAGS: tuple[str, ...] = (
     "shush",
     "clear throat",
 )
+
+#: Turbo's own paralinguistic **emotion** tags -- the other half of the same
+#: vocabulary, in upstream's own order. Upstream publishes the whole set in
+#: ``added_tokens.json`` (ids 50257-50275): nine sound tags and ten emotion
+#: tags. The split is upstream's grouping, kept here so the table can be read
+#: against the tokenizer's own file.
+TURBO_EMOTION_TAGS: tuple[str, ...] = (
+    "angry",
+    "fear",
+    "surprised",
+    "whispering",
+    "advertisement",
+    "dramatic",
+    "narration",
+    "crying",
+    "happy",
+    "sarcastic",
+)
+
+#: The whole upstream Turbo/Nano tag vocabulary: the nine sound tags and the
+#: ten emotion tags, in that order. Kept as the union so that every existing
+#: importer -- the pre-stage-1 claim, the notice regex -- keeps working from
+#: one list.
+TURBO_TAGS: tuple[str, ...] = TURBO_SOUND_TAGS + TURBO_EMOTION_TAGS
 
 #: The v2 tokens whose Turbo spelling differs from their own name. Only one
 #: does: the v2 set writes ``<clear_throat>`` with an underscore, Turbo's
@@ -550,7 +576,7 @@ def split_segments(
             it, so a Turbo checkpoint only speaks the tag if the text still
             carries it. Deleting it here is what made the feature silent.
 
-            On any other pack the nine Turbo names have no vocabulary to land
+            On any other pack the nineteen Turbo names have no vocabulary to land
             in, so they are kept as literal text too -- recorded as text, not
             as a tag -- and reported, by :func:`plan_text`, as a notice. They
             are deliberately **not** treated as character names: ``[laugh]``

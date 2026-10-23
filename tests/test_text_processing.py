@@ -25,6 +25,8 @@ from ComfyUI_Chatterbox.modules.text_processing import (
     CRASH_PROTECTION_TEMPLATE,
     MIN_SAFE_SEGMENT_CHARS,
     PARAM_ALIASES,
+    TURBO_EMOTION_TAGS,
+    TURBO_SOUND_TAGS,
     TURBO_TAGS,
     TURBO_TAG_V2_SPELLING,
     V2_SPECIAL_TOKENS,
@@ -337,13 +339,13 @@ class TestTurboTagsAreADifferentVocabulary:
         )
 
     def test_the_turbo_set_is_not_the_v2_set(self) -> None:
-        """Nine square-bracket tokens against thirty angle-bracket ones.
+        """Nineteen square-bracket tokens against thirty angle-bracket ones.
 
         Five names are shared between the two vocabularies (``sigh``, ``gasp``,
         ``cough``, ``sniff``, ``groan``); what differs is the *syntax* each
         vocabulary uses, which is the point of this module.
         """
-        assert len(TURBO_TAGS) == 9
+        assert len(TURBO_TAGS) == 19
         assert len(V2_SPECIAL_TOKENS) == 30
         shared = set(TURBO_TAGS) & {token.lower() for token in V2_SPECIAL_TOKENS}
         assert shared == {"sigh", "gasp", "cough", "sniff", "groan"}
@@ -388,7 +390,7 @@ class TestATurboTagIsNotAVoiceName:
     def test_a_bracket_with_a_colon_or_pipe_is_never_treated_as_a_turbo_tag(
         self, body: str
     ) -> None:
-        """Only the nine bare names are Turbo tags; the other forms keep
+        """Only the nineteen bare names are Turbo tags; the other forms keep
         their own meaning."""
         segment = split_segments(f"[{body}] Hello.")[0]
         assert segment.turbo_tags == ()
@@ -397,6 +399,165 @@ class TestATurboTagIsNotAVoiceName:
         """It is native there, so there is nothing to announce."""
         plan = plan_text("[laugh] Hi.", turbo_tags=True)
         assert not [notice for notice in plan.notices if "Turbo" in notice]
+
+
+# ---------------------------------------------------------------------------
+# The upstream Turbo/Nano vocabulary -- nineteen names, nine sounds and ten
+# emotions
+# ---------------------------------------------------------------------------
+
+#: Upstream's own spellings, hard-coded. The module's table is checked against
+#: these lists, never the other way round: the tokenizer's ``added_tokens.json``
+#: is the truth, and a table that drifts away from it is the bug this section
+#: exists to prevent.
+UPSTREAM_SOUND_TAGS: tuple[str, ...] = (
+    "laugh",
+    "sigh",
+    "gasp",
+    "chuckle",
+    "cough",
+    "sniff",
+    "groan",
+    "shush",
+    "clear throat",
+)
+
+UPSTREAM_EMOTION_TAGS: tuple[str, ...] = (
+    "angry",
+    "fear",
+    "surprised",
+    "whispering",
+    "advertisement",
+    "dramatic",
+    "narration",
+    "crying",
+    "happy",
+    "sarcastic",
+)
+
+UPSTREAM_TURBO_TAGS: tuple[str, ...] = (
+    "laugh",
+    "sigh",
+    "gasp",
+    "chuckle",
+    "cough",
+    "sniff",
+    "groan",
+    "shush",
+    "clear throat",
+    "angry",
+    "fear",
+    "surprised",
+    "whispering",
+    "advertisement",
+    "dramatic",
+    "narration",
+    "crying",
+    "happy",
+    "sarcastic",
+)
+
+
+class TestTheUpstreamTagTable:
+    """The table is the whole fix, so the table is pinned against upstream."""
+
+    def test_the_table_holds_the_19_upstream_spellings(self) -> None:
+        assert len(TURBO_TAGS) == 19
+        assert set(TURBO_TAGS) == set(UPSTREAM_TURBO_TAGS)
+
+    def test_the_two_groups_split_9_and_10(self) -> None:
+        assert len(TURBO_SOUND_TAGS) == 9
+        assert set(TURBO_SOUND_TAGS) == set(UPSTREAM_SOUND_TAGS)
+        assert len(TURBO_EMOTION_TAGS) == 10
+        assert set(TURBO_EMOTION_TAGS) == set(UPSTREAM_EMOTION_TAGS)
+
+    def test_the_union_is_the_two_groups(self) -> None:
+        """One list for the claim, the lookup and the notice regex."""
+        assert TURBO_TAGS == TURBO_SOUND_TAGS + TURBO_EMOTION_TAGS
+
+    def test_the_clear_throat_spelling_has_a_space_not_an_underscore(self) -> None:
+        """The tokenizer was trained on ``[clear throat]``; the v2 set's
+        ``<clear_throat>`` is a different token."""
+        assert "clear throat" in TURBO_TAGS
+        assert "clear_throat" not in TURBO_TAGS
+
+    def test_no_tag_is_a_prefix_of_another(self) -> None:
+        """The guard that keeps the notice regex's alternation safe.
+
+        The alternation is built from the table in order, so a shorter name
+        that is a prefix of a longer one would shadow it: ``[cough]`` would win
+        over ``[coughing]`` and the longer tag would never be noticed.
+        """
+        for tag in TURBO_TAGS:
+            for other in TURBO_TAGS:
+                if tag == other:
+                    continue
+                assert not other.startswith(tag), f"{tag!r} shadows {other!r}"
+
+
+@pytest.mark.parametrize("tag", UPSTREAM_TURBO_TAGS)
+class TestEveryUpstreamTagBehavesLikeATurboTag:
+    """What the nine sound tags already did, and the ten emotion tags now do.
+
+    The claim, the recording and the notice are all name-driven, so widening
+    the table widens every behaviour below: no new code path, no new state.
+    """
+
+    def test_it_survives_the_plan_verbatim(self, tag: str) -> None:
+        """The tag reaches the tokenizer exactly as upstream spells it.
+
+        Crash protection is off here: it pads any segment shorter than
+        twenty-one characters, and a two-word script is shorter than that.
+        """
+        plan = plan_text(f"[{tag}] Hi.", turbo_tags=True, crash_protection_template="")
+        assert plan.text == f"[{tag}] Hi."
+        assert plan.segments[0].text == f"[{tag}] Hi."
+
+    def test_it_is_recorded(self, tag: str) -> None:
+        segment = split_segments(f"[{tag}] Hi.", turbo_tags=True)[0]
+        assert segment.turbo_tags == (tag,)
+
+    def test_it_is_not_a_character_name(self, tag: str) -> None:
+        """Neither path: a tag is never swallowed as a voice called "happy"."""
+        turbo = split_segments(f"[{tag}] Hi.", turbo_tags=True)[0]
+        assert turbo.character is None
+        classic = split_segments(f"[{tag}] Hi.")[0]
+        assert classic.character is None
+
+    def test_the_classic_path_keeps_the_tag(self, tag: str) -> None:
+        """A pack with no Turbo vocabulary says the word rather than eating it."""
+        plan = plan_text(f"[{tag}] Hi.", crash_protection_template="")
+        assert plan.text == f"[{tag}] Hi."
+
+    def test_the_classic_path_reports_one_notice(self, tag: str) -> None:
+        """One notice, naming the tag and the family of packs that speak it."""
+        plan = plan_text(f"[{tag}] Hi.", crash_protection_template="")
+        assert len(plan.notices) == 1
+        notice = plan.notices[0]
+        assert f"[{tag}]" in notice
+        assert "Turbo" in notice
+        assert "Nano" in notice
+
+
+class TestAMixedCaseTag:
+    """Recognition folds the case; the text does not.
+
+    Upstream's added tokens are exact strings, so ``[HAPPY]`` is not the token
+    the model was trained on. Re-spelling it here would change what the user
+    typed, so the tag is recognised -- and recorded as ``happy`` -- and handed
+    on exactly as it was written.
+    """
+
+    def test_it_is_recognised_and_recorded_in_lower_case(self) -> None:
+        segment = split_segments("[HAPPY] Hi.", turbo_tags=True)[0]
+        assert segment.turbo_tags == ("happy",)
+        assert segment.character is None
+
+    def test_the_text_is_kept_as_typed(self) -> None:
+        segment = split_segments("[HAPPY] Hi.", turbo_tags=True)[0]
+        assert segment.text == "[HAPPY] Hi."
+        plan = plan_text("[HAPPY] Hi.", turbo_tags=True, crash_protection_template="")
+        assert plan.text == "[HAPPY] Hi."
 
 
 # ---------------------------------------------------------------------------
