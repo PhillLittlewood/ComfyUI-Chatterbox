@@ -68,7 +68,7 @@ packs.
 | Family | Members | Notes |
 | :--- | :--- | :--- |
 | **Classic** | `chatterbox` | English TTS, built-in reference voice in `conds.pt` |
-| **Turbo** | `chatterbox-turbo`, `chatterbox-turbo-nano` | Paralinguistic tags, top-k sampler; 350M / 110M |
+| **Turbo** | `chatterbox-turbo`, `chatterbox-nano` | Paralinguistic tags, top-k sampler; 350M / 110M. One family, one folder -- the dropdown entry picks the weights. |
 | **Flash** | `chatterbox-flash` | Block-diffusion sampler; a reference clip is required |
 | **Multilingual** | `chatterbox-mtl` | 23 languages, v1 / v2 / v3 |
 | **Single Language Packs** | zh-cmn, es-mx-latam, es-es, pt-br, pt-pt, hi | MTL node only |
@@ -76,6 +76,36 @@ packs.
 > [!TIP]
 > Picks appear in the node's model dropdown; nothing to configure by hand.
 > Ready-made graphs for every family live in [`example_workflows/`](./example_workflows).
+
+**Pack names.** The dropdown shows this repository's names; the weights come
+from upstream's own packs, fetched on first run:
+
+| Pick | Upstream pack | Folder under `models/tts/chatterbox/` |
+| :--- | :--- | :--- |
+| `chatterbox-turbo` | [`ResembleAI/chatterbox-turbo`](https://huggingface.co/ResembleAI/chatterbox-turbo) | `chatterbox-turbo` |
+| `chatterbox-nano` | [`ResembleAI/chatterbox-nano`](https://huggingface.co/ResembleAI/chatterbox-nano) | `chatterbox-turbo` (shared with Turbo) |
+
+Turbo and Nano are one family with two `t3` checkpoints: the folder is shared,
+the dropdown entry -- not the folder -- picks the weights.
+
+<details>
+<summary><b>Paralinguistic tags -- the 19 exact spellings</b></summary>
+
+`chatterbox-turbo` and `chatterbox-nano` speak these natively: write them into
+the text box in square brackets and the model says them.
+
+* **Sound (9):** `[laugh]`, `[sigh]`, `[gasp]`, `[chuckle]`, `[cough]`, `[sniff]`, `[groan]`, `[shush]`, `[clear throat]`
+* **Emotion (10):** `[angry]`, `[fear]`, `[surprised]`, `[whispering]`, `[advertisement]`, `[dramatic]`, `[narration]`, `[crying]`, `[happy]`, `[sarcastic]`
+
+Spell them exactly as written -- the tokenizer matches the literal text, so
+`[HAPPY]` is not `[happy]`, and `[clear throat]` takes a space, not an
+underscore. The v2 spelling `<clear_throat>` is re-spelled for these packs.
+
+No other pack has this vocabulary: on classic, multilingual, Single Language
+Pack and Flash the same words are read out as plain text, and the run says so
+in the log.
+
+</details>
 
 <p id="getting-started" align="center">◆◇◆◇◆◇◆◇◆◇◆</p>
 
@@ -144,7 +174,7 @@ list in ComfyUI's settings to turn the toasts off.
 | **Offline** | Packs are fetched by a first-run download and a local pack is never re-downloaded afterwards. |
 | **VRAM** | Weights load under ComfyUI's manager and offload between runs; ~2.5 GB per pack on disk as safetensors. |
 | **Layout** | Node code lives in `nodes/`, the vendored Chatterbox core in `src/chatterbox/`. |
-| **Emotion tags & chunking** | Turbo and Nano packs speak the paralinguistic tags natively: write `[laugh]`, `[chuckle]`, `[sigh]`, `[clear throat]` and the rest into the text box and the model says them. Classic, multilingual and Flash packs have no such vocabulary, so the same words are read out as plain text and the run says so in the log. `<giggle>`-style v2 tokens are re-spelled for Turbo and left alone elsewhere. Long scripts are cut into chunks, spoken one chunk at a time and joined again -- `auto` picks the join by script length (clean under 500 characters, crossfaded above it, padded with silence above 1000), and the cut never lands inside a tag. |
+| **Emotion tags & chunking** | `chatterbox-turbo` and `chatterbox-nano` speak the 19 paralinguistic tags natively: write `[laugh]`, `[happy]`, `[clear throat]` and the rest into the text box and the model says them -- the exact 19 spellings are in the [tag list](#models). Classic, multilingual, Single Language Pack and Flash packs have no such vocabulary, so the same words are read out as plain text and the run says so in the log. `<giggle>`-style v2 tokens are re-spelled for Turbo and left alone elsewhere. Long scripts are cut into chunks, spoken one chunk at a time and joined again -- `auto` picks the join by script length (clean under 500 characters, crossfaded above it, padded with silence above 1000), and the cut never lands inside a tag. |
 | **Upgrading from 1.x** | 2.0.0 moved packs from `models/chatterbox_tts/` to `models/tts/chatterbox/`. No compatibility shim is provided, so delete the old directory by hand. Widget order did not change and node ids did not change, so saved workflows still load. |
 | **Changelog** | [CHANGELOG.md](./CHANGELOG.md) |
 
