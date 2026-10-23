@@ -28,6 +28,7 @@ from ..modules.constants import DEFAULT_MODEL_PACK_NAME
 from ..modules.device_utils import get_device_options
 from ..modules.dtype_utils import DTYPE_AUTO, get_dtype_options
 from ..modules.model_discovery import get_chatterbox_model_pack_names
+from ..modules.model_info import canonical_pack_name
 
 __all__ = [
     "default_pack_name",
@@ -138,10 +139,14 @@ def validate_common_inputs(
     """
     if model_pack_name is not None:
         pack_names = list(get_chatterbox_model_pack_names())
-        if model_pack_name not in pack_names:
+        # An alias is the pack it now names, so it passes the same gate the
+        # current spelling does: a workflow saved before a pack was renamed
+        # must still queue.
+        canonical = canonical_pack_name(model_pack_name)
+        if canonical not in pack_names:
             available = ", ".join(pack_names) if pack_names else "none"
             return (
-                f"The Chatterbox voice pack '{model_pack_name}' was not found "
+                f"The Chatterbox voice pack '{canonical}' was not found "
                 f"under models/tts/chatterbox. Available packs: {available}. "
                 f"Install the pack, or pick one of the available names."
             )

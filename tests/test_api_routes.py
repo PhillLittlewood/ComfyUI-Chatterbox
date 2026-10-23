@@ -444,7 +444,7 @@ class TestDownloadStatus:
 class TestTtsSearchPaths:
     def test_reports_the_packs_under_the_default_root(self, routes, fake_web, tmp_path) -> None:
         tts_root = tmp_path / "models" / TTS_FOLDER_KEY
-        pack = make_pack(tts_root / "chatterbox", "chatterbox-turbo-nano", ("t3_nano_v1.safetensors",))
+        pack = make_pack(tts_root / "chatterbox", "chatterbox-nano", ("t3_nano_v1.safetensors",))
         router = FakeRouter()
         register_routes(
             router, FakeFolderPaths(tmp_path / "models", [str(tts_root)]), str(tmp_path)
@@ -459,7 +459,7 @@ class TestTtsSearchPaths:
         assert entry["path"] == str(tts_root)
         assert entry["is_default"] is True
         assert entry["chatterbox_subdir"] == str(tts_root / "chatterbox")
-        assert [model["name"] for model in entry["models"]] == ["chatterbox-turbo-nano"]
+        assert [model["name"] for model in entry["models"]] == ["chatterbox-nano"]
         assert entry["models"][0]["architecture"] == "chatterbox_nano"
         assert entry["models"][0]["path"] == str(pack)
 

@@ -125,9 +125,9 @@ class TestResolveTurboVariant:
         monkeypatch.setattr(
             gen.model_info,
             "AVAILABLE_CHATTERBOX_MODELS",
-            {"chatterbox-turbo-nano": {"architecture": "chatterbox_nano"}},
+            {"chatterbox-nano": {"architecture": "chatterbox_nano"}},
         )
-        assert gen._resolve_turbo_variant("chatterbox-turbo-nano") == "nano"
+        assert gen._resolve_turbo_variant("chatterbox-nano") == "nano"
 
     def test_a_missing_unknown_pack_is_not_turbo(
         self, pack_root, monkeypatch
@@ -524,9 +524,9 @@ class TestSharedFamilyFolderRouting:
         monkeypatch.setattr(
             gen.model_info,
             "AVAILABLE_CHATTERBOX_MODELS",
-            {"chatterbox-turbo-nano": {"architecture": "chatterbox_nano"}},
+            {"chatterbox-nano": {"architecture": "chatterbox_nano"}},
         )
-        assert gen._resolve_turbo_variant("chatterbox-turbo-nano") == "nano"
+        assert gen._resolve_turbo_variant("chatterbox-nano") == "nano"
 
     def test_a_turbo_entry_beats_the_shared_contents(self, family, monkeypatch) -> None:
         monkeypatch.setattr(

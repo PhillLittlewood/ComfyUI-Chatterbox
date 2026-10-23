@@ -51,6 +51,7 @@ from .model_info import (
     MTL_TOKENIZER_FILE,
     SHARED_ASSET_DIR_NAME,
     SHARED_ASSET_FILES,
+    canonical_pack_name,
     is_chatterbox_model_dir,
 )
 
@@ -104,8 +105,8 @@ MTL_S3GEN_CHECKPOINTS: tuple[str, ...] = (
 LEGACY_SHARED_DIRS: tuple[str, ...] = ("chatterbox", DEFAULT_MODEL_PACK_NAME)
 
 #: Turbo and Nano share one layout, and so share one completeness list. The
-#: tokenizer is checked separately: Turbo ships ``tokenizer.json``, Nano ships
-#: the HF fast layout (``vocab.json`` + ``merges.txt``) instead, and
+#: tokenizer is checked separately: both families publish the GPT2-style
+#: HuggingFace layout (``vocab.json`` + ``merges.txt``), and
 #: ``s3gen_meanflow.safetensors`` is here because the vendored Turbo loader
 #: builds ``S3Gen(meanflow=True)`` from it unconditionally.
 TURBO_CHECKPOINT_FILES: tuple[str, ...] = (
@@ -470,10 +471,12 @@ def _registry_size_estimate(model_pack_name: str) -> int:
     pointed at by a stale combo value. Returning 0 would leave ComfyUI to
     measure the (still empty) module and conclude the model is free, which is
     worse than a rough guess.
+
+    An alias is resolved to its canonical name first, so the old spelling of a
+    renamed pack is measured against the pack it now names.
     """
-    config = MODEL_CONFIGS.get(model_pack_name) or AVAILABLE_CHATTERBOX_MODELS.get(
-        model_pack_name
-    )
+    name = canonical_pack_name(model_pack_name)
+    config = MODEL_CONFIGS.get(name) or AVAILABLE_CHATTERBOX_MODELS.get(name)
     if not config:
         return 0
     size_gb = config.get("size_gb")
@@ -486,7 +489,7 @@ def _registry_size_estimate(model_pack_name: str) -> int:
     logging.debug(
         "[Chatterbox TTS] Pack '%s' has no weight files on disk yet; falling back "
         "to the registry estimate of %.2f GB.",
-        model_pack_name,
+        name,
         size_gb,
     )
     return int(size_gb * (1024**3))
@@ -506,6 +509,10 @@ class ChatterboxLoader:
     def resolve_pack_dir(model_name: str) -> str:
         """Directory the named pack lives in, or should be downloaded into.
 
+        An alias resolves to the pack it now names: a workflow saved before a
+        pack was renamed still finds (and downloads into) the same directory,
+        because the old spelling is answered from the canonical entry.
+
         Never raises for a missing directory: "not downloaded yet" is a normal
         state that the download step resolves, and a select-then-download flow
         asks this question before the files exist.
@@ -519,26 +526,31 @@ class ChatterboxLoader:
                 "model dropdown."
             )
 
-        entry = AVAILABLE_CHATTERBOX_MODELS.get(model_name)
+        name = canonical_pack_name(model_name)
+        # The official table is the fallback: a local scan can demote an entry
+        # to a local one, and an official entry is the only thing that knows
+        # the download target -- the Turbo-family Nano member downloads into
+        # the shared ``chatterbox-turbo`` folder, not into a folder of its own.
+        entry = AVAILABLE_CHATTERBOX_MODELS.get(name) or MODEL_CONFIGS.get(name)
         if entry and entry.get("type") == "local" and entry.get("path"):
             return str(entry["path"])
 
         # An official entry may download into a folder other than its own
         # name: the Turbo-family members share one directory, so the Nano
         # entry's ``folder`` is ``chatterbox-turbo``.
-        folder = str(entry.get("folder")) if entry and entry.get("folder") else model_name
+        folder = str(entry.get("folder")) if entry and entry.get("folder") else name
         known = get_model_pack_path(folder)
         if known:
             return known
 
-        if model_name == DEFAULT_MODEL_PACK_NAME:
+        if name == DEFAULT_MODEL_PACK_NAME:
             # The default pack has no directory until something creates one;
             # hand back the path it *would* live at.
             from .model_discovery import get_models_root
 
             return os.path.join(get_models_root(), DEFAULT_MODEL_PACK_NAME)
 
-        return str(get_model_pack_path(model_name) or model_name)
+        return str(get_model_pack_path(name) or name)
 
     # -- completeness --------------------------------------------------
 
@@ -911,11 +923,16 @@ class ChatterboxLoader:
 
     @staticmethod
     def _registry_entry(model_name: str) -> Optional[dict]:
-        """The registry config for ``model_name``, official or local, or ``None``."""
-        entry = MODEL_CONFIGS.get(model_name)
+        """The registry config for ``model_name``, official or local, or ``None``.
+
+        An alias is resolved to its canonical name first, so the old spelling
+        of a renamed pack answers with the entry that describes it.
+        """
+        name = canonical_pack_name(model_name)
+        entry = MODEL_CONFIGS.get(name)
         if entry is not None:
             return entry
-        return AVAILABLE_CHATTERBOX_MODELS.get(model_name)
+        return AVAILABLE_CHATTERBOX_MODELS.get(name)
 
     @staticmethod
     def _resolve_mtl_t3_file(pack_dir: str, model_name: str, t3_model: str) -> str:
@@ -1070,10 +1087,11 @@ class ChatterboxLoader:
         variant = "t3_nano_v1.safetensors" if nano else "t3_turbo_v1.safetensors"
         repo_id = "ResembleAI/chatterbox-nano" if nano else "ResembleAI/chatterbox-turbo"
 
-        # Turbo ships one tokenizer.json; Nano ships the HF fast layout
-        # (vocab.json + merges.txt) instead. AutoTokenizer reads either, so the
-        # completeness check accepts whichever layout the pack carries -- and
-        # when neither is there yet, vocab.json is the name the refusal lists.
+        # Both families publish the GPT2-style HuggingFace layout (vocab.json +
+        # merges.txt) rather than a tokenizer.json, but AutoTokenizer reads
+        # either, so the completeness check accepts whichever layout the pack
+        # carries -- and when neither is there yet, vocab.json is the name the
+        # refusal lists.
         tokenizer_file = "tokenizer.json"
         if not os.path.isfile(os.path.join(pack_dir, "tokenizer.json")):
             tokenizer_file = "vocab.json"

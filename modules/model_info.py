@@ -45,6 +45,8 @@ __all__ = [
     "infer_pack_architecture",
     "pack_dir_entries",
     "official_pack_names",
+    "PACK_ALIASES",
+    "canonical_pack_name",
     "NANO_ENTRY_SUFFIX",
     "is_chatterbox_model_dir",
     "scan_chatterbox_models",
@@ -201,23 +203,30 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
     },
     # The Turbo family, in ONE folder. Turbo is the family's name upstream
     # (ResembleAI/chatterbox-turbo); Nano is its smaller member
-    # (ResembleAI/chatterbox-nano). The two repos share everything except the
-    # t3 checkpoint (and Nano's tokenizer layout), so both members live in the
-    # same ``chatterbox-turbo`` directory and the dropdown entry -- not the
+    # (ResembleAI/chatterbox-nano). The two repos publish the same file list
+    # apart from the t3 checkpoint, so both members live in the same
+    # ``chatterbox-turbo`` directory and the dropdown entry -- not the
     # folder -- picks the weights. ``folder`` is that download target; it
     # differs from the entry name for Nano.
+    #
+    # Neither repo ships a ``tokenizer.json``: both publish the GPT2-style
+    # HuggingFace layout (``vocab.json`` + ``merges.txt`` plus the config
+    # files), which is what the lists below ask for. Declaring a file
+    # upstream does not publish makes the pack report itself as never
+    # downloaded, and the missing-file message name a file that is not
+    # supposed to be there.
     "chatterbox-turbo": {
         "repo_id": "ResembleAI/chatterbox-turbo",
         "folder": "chatterbox-turbo",
         "architecture": "chatterbox_turbo",
         "sample_rate": 24000,
         "size_gb": 1.4,
-        "files": ["t3_turbo_v1.safetensors", "t3_turbo_v1.yaml", "ve.safetensors", "s3gen.safetensors", "s3gen_meanflow.safetensors", "tokenizer.json", "conds.pt", "vocab.json", "merges.txt", "tokenizer_config.json", "added_tokens.json", "special_tokens_map.json"],
+        "files": ["t3_turbo_v1.safetensors", "t3_turbo_v1.yaml", "ve.safetensors", "s3gen.safetensors", "s3gen_meanflow.safetensors", "vocab.json", "merges.txt", "tokenizer_config.json", "added_tokens.json", "special_tokens_map.json", "conds.pt"],
         "description": "350M English model with paralinguistic tags; lower VRAM.",
     },
     # A quarter of Turbo again; runs on CPU at realtime. Shares the Turbo
     # folder: only the t3 checkpoint is Nano's own.
-    "chatterbox-turbo-nano": {
+    "chatterbox-nano": {
         "repo_id": "ResembleAI/chatterbox-nano",
         "folder": "chatterbox-turbo",
         "architecture": "chatterbox_nano",
@@ -266,6 +275,25 @@ MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
 AVAILABLE_CHATTERBOX_MODELS: Dict[str, Dict[str, Any]] = {
     name: {"type": "official", **config} for name, config in MODEL_CONFIGS.items()
 }
+
+
+# ── Pack names ───────────────────────────────────────────────────────
+#
+# Upstream renamed a pack; this repository keeps the old spelling alive as
+# an alias, because a saved workflow carries the name it was saved with and
+# has to keep working. An alias is accepted everywhere a pack name is read
+# and offered nowhere: the dropdown lists the current name only.
+PACK_ALIASES: Dict[str, str] = {"chatterbox-turbo-nano": "chatterbox-nano"}
+
+
+def canonical_pack_name(name: str) -> str:
+    """The current name for ``name`` -- the alias table's answer, or the name.
+
+    Call it before a name reaches the registry, a path or the offered list:
+    an alias must never be looked up, resolved or offered as if it were a
+    pack of its own.
+    """
+    return PACK_ALIASES.get(name, name)
 
 
 def official_pack_names() -> List[str]:
@@ -457,9 +485,13 @@ def pack_dir_entries(pack_dir: str) -> List[tuple]:
     the Turbo family: the two repos share every weight except the t3
     checkpoint, so a folder holding **both** ``t3_turbo_v1.safetensors`` and
     ``t3_nano_v1.safetensors`` serves both members and is offered twice --
-    under its own name (Turbo) and with :data:`NANO_ENTRY_SUFFIX` appended
-    (Nano). The suffix name is the user's handle for the variant; the folder
-    stays a single copy of the shared weights.
+    under its own name (Turbo) and under the canonical Nano name. The
+    synthesized name is the user's handle for the variant; the folder stays
+    a single copy of the shared weights.
+
+    Only the synthesized name is canonicalised: it is a name this module
+    mints, not one a directory owns. A directory keeps the name it has --
+    rewriting it would break the name/path pairing the loader resolves by.
     """
     if not pack_dir or not os.path.isdir(pack_dir):
         return []
@@ -470,7 +502,7 @@ def pack_dir_entries(pack_dir: str) -> List[tuple]:
     if has_turbo and has_nano:
         return [
             (base, "chatterbox_turbo"),
-            (base + NANO_ENTRY_SUFFIX, "chatterbox_nano"),
+            (canonical_pack_name(base + NANO_ENTRY_SUFFIX), "chatterbox_nano"),
         ]
     return [(base, _infer_architecture(sorted(entries)) or "unknown")]
 
@@ -622,6 +654,22 @@ def unregister_local_model(name: str) -> bool:
     return True
 
 
+def _is_official_variant_of(path: str, entry_name: str) -> bool:
+    """True when ``entry_name`` is the official pack that lives in ``path``.
+
+    The Turbo family shares one folder, so the scan mints a second entry for
+    the folder's other member -- and that member has an official registry
+    entry of its own, naming the same folder. Registering the local copy
+    would replace that official entry (dropping its ``repo_id`` and its
+    download target), and the next sweep would delete the name outright.
+    """
+    config = MODEL_CONFIGS.get(entry_name)
+    if not config:
+        return False
+    folder = config.get("folder")
+    return bool(folder) and folder == os.path.basename(os.path.normpath(path))
+
+
 def refresh_local_models() -> List[dict]:
     """Re-scan the models root and mirror its packs into the registry.
 
@@ -630,7 +678,9 @@ def refresh_local_models() -> List[dict]:
     frontend refresh is cheap. Official entries are preserved; local entries
     for packs that have disappeared are dropped. A Turbo-family folder serving
     both members registers under each of the names
-    :func:`pack_dir_entries` offers.
+    :func:`pack_dir_entries` offers -- except the member that has an official
+    entry of its own for that very folder: there the official entry stays,
+    because it is the one that knows the repository and the download target.
     """
     from . import model_discovery
 
@@ -641,17 +691,24 @@ def refresh_local_models() -> List[dict]:
     }
 
     found_names: set = set()
+    local_names: set = set()
     for path in sorted(found_paths):
+        base = os.path.basename(os.path.normpath(path))
         for entry_name, architecture in pack_dir_entries(path):
             found_names.add(entry_name)
+            if entry_name != base and _is_official_variant_of(path, entry_name):
+                # The synthesized name of an official pack that lives in this
+                # folder: the official entry already describes it.
+                continue
             register_local_model(entry_name, path, architecture=architecture)
+            local_names.add(entry_name)
 
     for name in current - found_names:
         unregister_local_model(name)
 
     return [
         {"name": name, "path": str(AVAILABLE_CHATTERBOX_MODELS[name].get("path", "")), "type": "local"}
-        for name in sorted(found_names & set(AVAILABLE_CHATTERBOX_MODELS))
+        for name in sorted(local_names & set(AVAILABLE_CHATTERBOX_MODELS))
     ]
 
 

@@ -43,7 +43,7 @@ REQUIRED_OFFICIAL_MODELS = (
     "T3_v2",
     "T3_v3",
     "chatterbox-turbo",
-    "chatterbox-turbo-nano",
+    "chatterbox-nano",
 )
 
 
@@ -87,7 +87,7 @@ class TestOfficialRegistry:
 
     def test_turbo_and_nano_come_from_their_own_repositories(self) -> None:
         assert MODEL_CONFIGS["chatterbox-turbo"]["repo_id"] == "ResembleAI/chatterbox-turbo"
-        assert MODEL_CONFIGS["chatterbox-turbo-nano"]["repo_id"] == "ResembleAI/chatterbox-nano"
+        assert MODEL_CONFIGS["chatterbox-nano"]["repo_id"] == "ResembleAI/chatterbox-nano"
 
     def test_the_multilingual_variants_are_distinct_checkpoints(self) -> None:
         files = [MODEL_CONFIGS[name]["files"][0] for name in ("T3_v1", "T3_v2", "T3_v3")]
@@ -464,9 +464,9 @@ class TestModuleHygiene:
 class TestTurboFamilyFolder:
     def test_both_members_download_into_one_folder(self) -> None:
         assert MODEL_CONFIGS["chatterbox-turbo"]["folder"] == "chatterbox-turbo"
-        assert MODEL_CONFIGS["chatterbox-turbo-nano"]["folder"] == "chatterbox-turbo"
+        assert MODEL_CONFIGS["chatterbox-nano"]["folder"] == "chatterbox-turbo"
         assert (
-            MODEL_CONFIGS["chatterbox-turbo-nano"]["repo_id"]
+            MODEL_CONFIGS["chatterbox-nano"]["repo_id"]
             == "ResembleAI/chatterbox-nano"
         )
 
@@ -478,7 +478,7 @@ class TestTurboFamilyFolder:
 
         assert model_info.pack_dir_entries(str(family)) == [
             ("chatterbox-turbo", "chatterbox_turbo"),
-            ("chatterbox-turbo-nano", "chatterbox_nano"),
+            ("chatterbox-nano", "chatterbox_nano"),
         ]
 
     def test_a_single_variant_folder_offers_itself_once(self, tmp_path) -> None:
@@ -523,3 +523,147 @@ class TestTurboFamilyFolder:
         assert registry["family"]["architecture"] == "chatterbox_turbo"
         assert registry["family-nano"]["architecture"] == "chatterbox_nano"
         assert registry["family-nano"]["path"] == str(family)
+
+
+# ---------------------------------------------------------------------------
+# The upstream pack names (2026-10-23)
+# ---------------------------------------------------------------------------
+
+
+class TestPackNameAliases:
+    """A saved workflow carries the name it was saved with, so the old
+    spelling has to keep resolving -- but it is never offered in the
+    dropdown, and one table is the only place that knows about it."""
+
+    def test_the_alias_points_at_the_nano_pack(self) -> None:
+        assert set(model_info.PACK_ALIASES.values()) == {"chatterbox-nano"}
+
+    def test_every_alias_points_at_a_real_pack(self) -> None:
+        for alias, canonical in model_info.PACK_ALIASES.items():
+            assert canonical in MODEL_CONFIGS, (
+                f"the alias '{alias}' points at '{canonical}', which is not a pack"
+            )
+            assert canonical not in model_info.PACK_ALIASES, (
+                f"the alias '{alias}' points at '{canonical}', which is itself an alias"
+            )
+
+    def test_an_alias_is_never_offered(self) -> None:
+        for alias in model_info.PACK_ALIASES:
+            assert alias not in model_info.official_pack_names()
+            assert alias not in AVAILABLE_CHATTERBOX_MODELS
+
+    def test_canonicalising_returns_the_current_name(self) -> None:
+        for alias, canonical in model_info.PACK_ALIASES.items():
+            assert model_info.canonical_pack_name(alias) == canonical
+            assert model_info.canonical_pack_name(canonical) == canonical
+
+    def test_an_unknown_name_is_its_own_canonical_name(self) -> None:
+        assert model_info.canonical_pack_name("my-pack") == "my-pack"
+        assert model_info.canonical_pack_name("") == ""
+
+
+class TestUpstreamFileLists:
+    """The registry asks for the files upstream publishes. A file that is not
+    there makes the pack report itself as never downloaded."""
+
+    def test_the_turbo_entry_lists_the_files_upstream_publishes(self) -> None:
+        files = MODEL_CONFIGS["chatterbox-turbo"]["files"]
+        assert "tokenizer.json" not in files, (
+            "upstream's Turbo repo ships the GPT2 tokenizer layout "
+            "(vocab.json + merges.txt), not a tokenizer.json"
+        )
+        assert {
+            "vocab.json",
+            "merges.txt",
+            "tokenizer_config.json",
+            "added_tokens.json",
+            "special_tokens_map.json",
+        } <= set(files)
+
+    def test_both_members_agree_on_the_shared_files(self) -> None:
+        """The two upstream repos publish the same file list apart from their
+        own t3 checkpoint."""
+        turbo = set(MODEL_CONFIGS["chatterbox-turbo"]["files"])
+        nano = set(MODEL_CONFIGS["chatterbox-nano"]["files"])
+        assert turbo - nano == {"t3_turbo_v1.safetensors", "t3_turbo_v1.yaml"}
+        assert nano - turbo == {"t3_nano_v1.safetensors", "t3_nano_v1.yaml"}
+
+    def test_no_turbo_family_entry_asks_for_a_tokenizer_json(self) -> None:
+        for name in ("chatterbox-turbo", "chatterbox-nano"):
+            assert "tokenizer.json" not in MODEL_CONFIGS[name]["files"]
+
+
+class TestTheOfficialNanoEntrySurvivesTheLocalScan:
+    """The shared Turbo folder holds both members, so the scan mints the
+    Nano name for it -- but the official Nano entry already knows that folder
+    and the repository it comes from, and a local copy would strip both."""
+
+    @staticmethod
+    def _registry_copy(monkeypatch) -> dict:
+        registry = {k: dict(v) for k, v in AVAILABLE_CHATTERBOX_MODELS.items()}
+        monkeypatch.setattr(model_info, "AVAILABLE_CHATTERBOX_MODELS", registry)
+        return registry
+
+    @staticmethod
+    def _family_folder(tmp_path) -> Path:
+        family = tmp_path / "chatterbox-turbo"
+        family.mkdir()
+        for name in ("t3_turbo_v1.safetensors", "t3_nano_v1.safetensors"):
+            (family / name).write_bytes(b"\x00" * 4)
+        return family
+
+    def test_the_shared_folder_keeps_the_official_nano_entry(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        import ComfyUI_Chatterbox.modules.model_discovery as discovery
+
+        family = self._family_folder(tmp_path)
+        registry = self._registry_copy(monkeypatch)
+        monkeypatch.setattr(
+            discovery, "get_model_pack_entries", lambda: [("chatterbox-turbo", str(family))]
+        )
+
+        refresh_local_models()
+
+        entry = registry["chatterbox-nano"]
+        assert entry["type"] == "official"
+        assert entry["repo_id"] == "ResembleAI/chatterbox-nano"
+        assert entry["folder"] == "chatterbox-turbo"
+
+    def test_the_shared_folder_still_registers_its_own_name(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        import ComfyUI_Chatterbox.modules.model_discovery as discovery
+
+        family = self._family_folder(tmp_path)
+        registry = self._registry_copy(monkeypatch)
+        monkeypatch.setattr(
+            discovery, "get_model_pack_entries", lambda: [("chatterbox-turbo", str(family))]
+        )
+
+        refresh_local_models()
+
+        entry = registry["chatterbox-turbo"]
+        assert entry["type"] == "local"
+        assert entry["path"] == str(family)
+
+    def test_a_directory_of_the_canonical_name_still_registers_locally(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """A user's own folder is data, not vocabulary: it keeps its name and
+        its local entry, exactly as every other directory does."""
+        import ComfyUI_Chatterbox.modules.model_discovery as discovery
+
+        pack = tmp_path / "chatterbox-nano"
+        pack.mkdir()
+        (pack / "t3_nano_v1.safetensors").write_bytes(b"\x00" * 4)
+        registry = self._registry_copy(monkeypatch)
+        monkeypatch.setattr(
+            discovery, "get_model_pack_entries", lambda: [("chatterbox-nano", str(pack))]
+        )
+
+        refresh_local_models()
+
+        entry = registry["chatterbox-nano"]
+        assert entry["type"] == "local"
+        assert entry["path"] == str(pack)

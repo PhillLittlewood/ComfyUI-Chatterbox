@@ -42,7 +42,7 @@ OFFICIAL_PACK_NAMES = (
     "chatterbox-multilingual-pt-pt",
     "chatterbox-multilingual-hi",
     "chatterbox-turbo",
-    "chatterbox-turbo-nano",
+    "chatterbox-nano",
     "chatterbox-flash",
 )
 
@@ -221,7 +221,20 @@ class TestDownloadablePacksAreOffered:
         names = get_chatterbox_model_pack_names()
 
         assert "chatterbox-turbo" in names
-        assert "chatterbox-turbo-nano" in names
+        assert "chatterbox-nano" in names
+
+    def test_no_alias_is_offered(self, models_root) -> None:
+        """An old spelling keeps resolving, but it is never put in front of
+        the user: the dropdown lists the current name only."""
+        from ComfyUI_Chatterbox.modules.model_info import PACK_ALIASES
+
+        names = get_chatterbox_model_pack_names()
+
+        for alias in PACK_ALIASES:
+            assert alias not in names, (
+                f"the alias '{alias}' is offered in the dropdown; it is a "
+                "resolution-time name, not a pack of its own"
+            )
 
     def test_the_t3_checkpoints_are_not_offered(self, models_root) -> None:
         """``T3_v1``/``T3_v2``/``T3_v3`` are checkpoints inside the classic
@@ -474,22 +487,24 @@ class TestTurboFamilyFolderIsOfferedTwice:
 
         assert [name for name, _path in entries] == [
             "chatterbox-turbo",
-            "chatterbox-turbo-nano",
+            "chatterbox-nano",
         ]
         assert entries[0][1] == entries[1][1] == str(family)
 
     def test_the_synthesized_name_yields_to_a_real_directory(self, models_root) -> None:
+        """A directory that owns the canonical name owns it: the name the
+        scan mints must not take it over."""
         family = models_root / "chatterbox-turbo"
         family.mkdir()
         for name in ("t3_turbo_v1.safetensors", "t3_nano_v1.safetensors"):
             (family / name).write_bytes(b"\x00" * 4)
-        real = models_root / "chatterbox-turbo-nano"
+        real = models_root / "chatterbox-nano"
         real.mkdir()
 
         paths = dict(get_model_pack_entries())
 
         assert paths["chatterbox-turbo"] == str(family)
-        assert paths["chatterbox-turbo-nano"] == str(real)
+        assert paths["chatterbox-nano"] == str(real)
 
     def test_a_single_variant_folder_is_offered_once(self, models_root) -> None:
         pack = models_root / "chatterbox-turbo"
@@ -498,13 +513,29 @@ class TestTurboFamilyFolderIsOfferedTwice:
 
         assert [name for name, _path in get_model_pack_entries()] == ["chatterbox-turbo"]
 
+    def test_the_shared_folder_is_offered_under_the_canonical_name(
+        self, models_root
+    ) -> None:
+        """One folder, two entries -- and the Nano one carries the name
+        upstream gives it."""
+        family = models_root / "chatterbox-turbo"
+        family.mkdir()
+        for name in ("t3_turbo_v1.safetensors", "t3_nano_v1.safetensors"):
+            (family / name).write_bytes(b"\x00" * 4)
+
+        names = get_chatterbox_model_pack_names()
+
+        assert names.count("chatterbox-nano") == 1
+        assert len(names) == len(set(names))
+        assert "chatterbox-turbo" in names
+
     def test_resolve_pack_dir_honours_the_entry_folder(self, models_root, monkeypatch) -> None:
         """The Nano member downloads into the shared Turbo folder."""
         from ComfyUI_Chatterbox.modules import model_info
         from ComfyUI_Chatterbox.modules.loader import ChatterboxLoader
 
         registry = dict(model_info.AVAILABLE_CHATTERBOX_MODELS)
-        registry["chatterbox-turbo-nano"] = {
+        registry["chatterbox-nano"] = {
             "type": "official",
             "repo_id": "ResembleAI/chatterbox-nano",
             "folder": "chatterbox-turbo",
@@ -513,15 +544,38 @@ class TestTurboFamilyFolderIsOfferedTwice:
             "ComfyUI_Chatterbox.modules.loader.AVAILABLE_CHATTERBOX_MODELS", registry
         )
 
-        resolved = ChatterboxLoader.resolve_pack_dir("chatterbox-turbo-nano")
+        resolved = ChatterboxLoader.resolve_pack_dir("chatterbox-nano")
 
         assert resolved == str(models_root / "chatterbox-turbo")
+
+
+class TestTheOfficialNanoEntrySurvivesTheSharedFolder:
+    """The shared folder holds both members, so the scan mints the Nano name
+    for it -- but the official Nano entry already knows that folder and the
+    repository it comes from, and a local copy would strip both."""
+
+    def test_the_scan_keeps_the_official_nano_entry(self, models_root, monkeypatch) -> None:
+        from ComfyUI_Chatterbox.modules import model_info
+
+        family = models_root / "chatterbox-turbo"
+        family.mkdir()
+        for name in ("t3_turbo_v1.safetensors", "t3_nano_v1.safetensors"):
+            (family / name).write_bytes(b"\x00" * 4)
+
+        registry = {k: dict(v) for k, v in model_info.AVAILABLE_CHATTERBOX_MODELS.items()}
+        monkeypatch.setattr(model_info, "AVAILABLE_CHATTERBOX_MODELS", registry)
+
+        model_info.refresh_local_models()
+
+        entry = registry["chatterbox-nano"]
+        assert entry["type"] == "official"
+        assert entry["repo_id"] == "ResembleAI/chatterbox-nano"
+        assert entry["folder"] == "chatterbox-turbo"
 
 
 # ---------------------------------------------------------------------------
 # An offered pack that is not on disk yet resolves, and downloads
 # ---------------------------------------------------------------------------
-
 
 class TestAnAbsentOfficialPackResolves:
     """The offered name has to mean something: it must resolve to the
@@ -540,7 +594,7 @@ class TestAnAbsentOfficialPackResolves:
             ("chatterbox-multilingual-hi", "chatterbox-multilingual-hi"),
             ("chatterbox-turbo", "chatterbox-turbo"),
             # Nano is a dropdown entry over Turbo's folder.
-            ("chatterbox-turbo-nano", "chatterbox-turbo"),
+            ("chatterbox-nano", "chatterbox-turbo"),
             ("chatterbox-flash", "chatterbox-flash"),
         ],
     )

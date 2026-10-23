@@ -128,9 +128,10 @@ def get_model_pack_entries() -> List[Tuple[str, str]]:
     """``(name, path)`` for every pack, served from cache when unchanged.
 
     A Turbo-family folder carrying both t3 checkpoints is listed twice -- once
-    under its own name, once with the nano suffix -- because the dropdown
-    entry, not the folder, picks the weights. The rule (and the suffix) live
-    in :func:`modules.model_info.pack_dir_entries`; this pass only borrows the
+    under its own name, once under the canonical upstream name of the other
+    member -- because the dropdown entry, not the folder, picks the weights.
+    The rule (and the name) live in
+    :func:`modules.model_info.pack_dir_entries`; this pass only borrows the
     names, and skips a synthesized name that a real directory already owns.
     """
     from .model_info import pack_dir_entries

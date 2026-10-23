@@ -269,13 +269,20 @@ def _resolve_turbo_variant(model_name: str) -> Optional[str]:
     the scan has not seen. Registry first is what makes the shared-family
     folder work: a directory holding both t3 checkpoints cannot answer "which
     member" from its contents, but each dropdown entry names its own.
+
+    An alias is resolved to its canonical name **before** the registry lookup,
+    so the old spelling of a renamed pack answers with the entry that
+    describes it -- and never degrades to what the directory happens to hold.
+    A folder carrying only Turbo's weights still answers "nano" for the Nano
+    alias, because the registry knows which member the name means.
     """
+    canonical = model_info.canonical_pack_name(model_name)
     try:
-        pack_dir = ChatterboxLoader.resolve_pack_dir(model_name)
+        pack_dir = ChatterboxLoader.resolve_pack_dir(canonical)
     except ValueError:
         return None
 
-    entry = model_info.AVAILABLE_CHATTERBOX_MODELS.get(model_name) or {}
+    entry = model_info.AVAILABLE_CHATTERBOX_MODELS.get(canonical) or {}
     architecture = entry.get("architecture")
     if architecture not in ("chatterbox_turbo", "chatterbox_nano") and os.path.isdir(pack_dir):
         architecture = model_info.infer_pack_architecture(pack_dir)
@@ -333,6 +340,11 @@ def load_chatterbox_model(
     Raises:
         RuntimeError: The pack could not be loaded.
     """
+    # An alias is the pack it now names. The cache identity, the handler's
+    # name and the directory have to be the canonical ones, or the same pack
+    # would be loaded twice under two spellings.
+    model_name = model_info.canonical_pack_name(model_name)
+
     # 1. Resolve the attention mode -- before the cache key. A key built from
     #    the unresolved request would not match the key this same pack already
     #    holds under its resolved mode.
@@ -959,6 +971,10 @@ def load_chatterbox_entry_point(
     Raises:
         RuntimeError: The pack could not be loaded.
     """
+    # An alias is the pack it now names -- and the cache key below is the
+    # pack's identity, so it has to be the canonical spelling.
+    model_name = model_info.canonical_pack_name(model_name)
+
     actual_attention_mode = resolve_attention_mode(attention_mode, False)
 
     if device == DEVICE_CPU:

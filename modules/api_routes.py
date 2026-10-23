@@ -65,6 +65,7 @@ from .model_info import (
     CHATTERBOX_TOKENIZER_FILE,
     CHATTERBOX_WEIGHT_FILES,
     MODEL_CONFIGS,
+    canonical_pack_name,
     describe_model_dir,
     is_chatterbox_model_dir,
     scan_chatterbox_models,
@@ -234,8 +235,17 @@ def _is_official_pack_present(
     The directory an entry downloads into is its ``folder``, which for the
     Turbo-family Nano member is the shared ``chatterbox-turbo`` folder rather
     than the entry's own name.
+
+    An alias is resolved to its canonical name first, so the old spelling of a
+    renamed pack asks about the very directory the current name asks about --
+    and a config that names no folder of its own inherits the canonical
+    entry's.
     """
-    folder = str(config.get("folder") or model_name)
+    canonical = canonical_pack_name(model_name)
+    folder = str(config.get("folder") or "")
+    if not folder:
+        official = MODEL_CONFIGS.get(canonical, {})
+        folder = str(official.get("folder") or canonical)
     for root in _tts_roots(folder_paths_module):
         model_dir = os.path.join(root, CHATTERBOX_SUBDIR_NAME, folder)
         if _pack_files_present(model_dir, config.get("files")):
