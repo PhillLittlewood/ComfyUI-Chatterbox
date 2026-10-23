@@ -714,3 +714,20 @@ class TestNotices:
         assert classic.chunks == turbo.chunks
         assert classic.notices != ()
         assert turbo.notices == ()
+
+
+class TestTheNoticeNamesTheTagGroup:
+    """A notice says which kind of tag it is.
+
+    Upstream splits its Turbo vocabulary into nine sound tags and ten emotion
+    tags, so the notice names the group the typed tag belongs to.
+    """
+
+    def test_a_sound_tag_notice_calls_it_paralinguistic(self) -> None:
+        notice = plan_text("[laugh] Hi there, this is long enough to speak.").notices[0]
+        assert "paralinguistic tag" in notice
+
+    def test_an_emotion_tag_notice_calls_it_an_emotion_tag(self) -> None:
+        notice = plan_text("[happy] Hi there, this is long enough to speak.").notices[0]
+        assert "emotion tag" in notice
+        assert "paralinguistic" not in notice

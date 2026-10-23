@@ -866,9 +866,16 @@ def chunk_text(
 
 
 def _turbo_tag_notice(tag: str) -> str:
-    """The notice a Turbo tag earns on a pack that has no Turbo vocabulary."""
+    """The notice a Turbo tag earns on a pack that has no Turbo vocabulary.
+
+    Upstream splits its tag vocabulary in two -- nine sound tags and ten
+    emotion tags -- so the notice names the group the typed tag belongs to:
+    a sound tag makes a noise, an emotion tag changes a delivery, and a user
+    who typed one of them deserves to know which they got.
+    """
+    kind = "paralinguistic tag" if tag in TURBO_SOUND_TAGS else "emotion tag"
     return (
-        f"[{tag}] is a Turbo/Nano paralinguistic tag. This pack has no Turbo "
+        f"[{tag}] is a Turbo/Nano {kind}. This pack has no Turbo "
         f"tag vocabulary, so the tag is spoken as literal text -- use a Turbo "
         f"or Nano pack for it to have an effect."
     )
