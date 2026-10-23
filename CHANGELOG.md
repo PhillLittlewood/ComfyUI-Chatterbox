@@ -5,6 +5,39 @@ All notable changes to ComfyUI-Chatterbox are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.5] - 2026-10-23
+
+The release in which the models speak like the script asks. Everything below
+landed since 2.0.0. **The node surface did not change:** node ids, widget order
+and output socket names are the same.
+
+### Added
+
+* **Emotion tags work.** The Turbo/Nano vocabulary is nineteen tags, not nine.
+  The ten emotion tags -- `[dramatic]`, `[sarcastic]`, `[happy]`,
+  `[surprised]`, `[angry]`, `[fear]`, `[crying]`, `[whispering]`, `[narration]`,
+  `[advertisement]` -- were parsed as a voice name and never reached the
+  tokenizer, so they did nothing. All nineteen now pass through verbatim and
+  land on the model's own token ids (50257-50275).
+* **Long-script chunking.** Four widgets on the TTS node:
+  `enable_chunking`, `max_chars_per_chunk`, `chunk_combination_method`,
+  `silence_between_chunks_ms`. Chunks join by `auto`, `concatenate`,
+  `silence_padding` or `crossfade`, and a cut never lands inside a tag.
+* **Toasts for node errors.** The web UI shows the node's own error message
+  instead of only the console.
+
+### Fixed
+
+* **The first run lists the packs.** With no `models/tts/chatterbox` folder the
+  dropdown still offers every downloadable pack, and picking one downloads it.
+* **The download asks for the right files.** The multilingual path stopped
+  demanding the classic pack's checkpoint.
+* **Pack names follow upstream.** `chatterbox-nano`, `chatterbox-turbo`,
+  `chatterbox-flash`. `chatterbox-turbo-nano` still resolves everywhere, so
+  saved workflows keep working.
+* **The notice names the tag's group.** A sound tag and an emotion tag are
+  different things, and the log now says which one was typed.
+
 ## [2.0.0] - 2026-10-04
 
 A structural release. The internals were rebuilt against the ComfyUI V3 node API
